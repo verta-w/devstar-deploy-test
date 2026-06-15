@@ -25,7 +25,7 @@ jobs:
       - name: 3. 启动并验证服务
         timeout-minutes: 10
         run: |
-          devstar start
+          sudo devstar start
           echo "等待服务初始化..."
           sleep 10
           # 【核心验证】：假设服务启动后占用 8080 端口，检查端口是否通畅
@@ -53,7 +53,7 @@ jobs:
       - name: 3. 启动并验证服务
         timeout-minutes: 10
         run: |
-          devstar start
+          sudo devstar start
           echo "等待服务初始化..."
           sleep 10
           # 【核心验证】：检查服务是否在运行
