@@ -25,6 +25,7 @@ jobs:
       - name: 3. 启动并验证服务
         timeout-minutes: 10
         run: |
+          source ~/.bashrc
           sudo devstar start
           echo "等待服务初始化..."
           sleep 10
@@ -53,6 +54,7 @@ jobs:
       - name: 3. 启动并验证服务
         timeout-minutes: 10
         run: |
+          source ~/.bashrc
           sudo devstar start
           echo "等待服务初始化..."
           sleep 10
