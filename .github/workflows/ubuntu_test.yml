@@ -1,0 +1,60 @@
+name: Ubuntu 22.04 Arch Compatibility Test
+
+on:
+  # 允许我们在 GitHub 网页上点击按钮手动触发测试
+  workflow_dispatch:
+
+jobs:
+  # 任务 1：测试 Ubuntu 22.04 x86_64 架构
+  test-x86_64:
+    name: Ubuntu 22.04 (x86_64)
+    runs-on: ubuntu-22.04 # GitHub 原生提供的就是 x86_64 环境
+    
+    steps:
+      - name: 1. 环境信息查看
+        run: |
+          echo "当前系统架构为："
+          uname -m
+          docker --version
+
+      - name: 2. 执行安装脚本 (设置10分钟超时)
+        timeout-minutes: 10
+        run: |
+          curl -fsSL https://devstar.cn/install | bash
+
+      - name: 3. 启动并验证服务
+        timeout-minutes: 10
+        run: |
+          devstar start
+          echo "等待服务初始化..."
+          sleep 10
+          # 【核心验证】：假设服务启动后占用 8080 端口，检查端口是否通畅
+          # 如果你的项目不是 8080，请修改为实际端口，或者使用 docker ps 验证
+          nc -z -v -w5 localhost 8080
+
+  # 任务 2：测试 Ubuntu 22.04 ARM64 架构
+  test-arm64:
+    name: Ubuntu 22.04 (ARM64)
+    # 使用 GitHub 官方最新提供的原生 Linux ARM64 运行环境
+    runs-on: ubuntu-22.04-arm64
+
+    steps:
+      - name: 1. 环境信息查看
+        run: |
+          echo "当前系统架构为："
+          uname -m
+          docker --version
+
+      - name: 2. 执行安装脚本 (设置10分钟超时)
+        timeout-minutes: 10
+        run: |
+          curl -fsSL https://devstar.cn/install | bash
+
+      - name: 3. 启动并验证服务
+        timeout-minutes: 10
+        run: |
+          devstar start
+          echo "等待服务初始化..."
+          sleep 10
+          # 【核心验证】：检查服务是否在运行
+          nc -z -v -w5 localhost 8080
