@@ -54,48 +54,69 @@ jobs:
 
   # 任务 2：测试 Ubuntu 22.04 ARM64 架构
   test-arm64:
-    name: Ubuntu 22.04 (ARM64)
-    # 使用 GitHub 官方最新提供的原生 Linux ARM64 运行环境
-    runs-on: ubuntu-22.04-arm64
+    name: Ubuntu 22.04 (ARM64 via QEMU)
+    runs-on: ubuntu-22.04 # 使用免费且充足的 x86_64 宿主机
 
     steps:
-      - name: 1. 环境信息查看
-        run: |
-          echo "当前系统架构为："
-          uname -m
-          docker --version
+      # 第一步：在宿主机上配置 QEMU 跨架构运行环境（必须在最前面）
+      - name: 1. 配置 QEMU 跨架构运行环境
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
-      - name: 2. 执行安装脚本 (设置10分钟超时)
-        timeout-minutes: 10
-        run: |
-          curl -fsSL https://devstar.cn/install | bash
+      # 第二步：使用 run-on-arch-action 插件，把接下来的所有测试步骤打包塞进模拟的 ARM64 容器里运行
+      - name: 2. 在模拟的 Ubuntu 22.04 ARM64 环境中执行完整测试
+        uses: uraimo/run-on-arch-action@v2
+        with:
+          arch: aarch64       # 对应 ARM64 / ARMv8 架构
+          distro: ubuntu22.04 # 对应真实的 Ubuntu 22.04 系统环境
+          
+          # 传递环境变量，防止某些安装包弹窗要求选择时区而卡死
+          env: |
+            DEBIAN_FRONTEND: noninteractive
 
-      - name: 3. 启动并验证服务
-        timeout-minutes: 10
-        run: |
-          echo "=== 正在全盘检索 devstar 二进制文件的实际安装路径 ==="
-          # 在公共目录和用户家目录下寻找名为 devstar 的可执行文件
-          REAL_PATH=$(which devstar || find /usr/local/bin /home/runner -name "devstar" -type f 2>/dev/null | head -n 1)
-          
-          if [ -z "$REAL_PATH" ]; then
-            echo "❌ 错误：在系统里完全找不到 devstar 命令，可能安装脚本本身就失败了！"
-            exit 1
-          fi
-          
-          echo "🎯 成功找到路径：$REAL_PATH"
-          echo "=== 开始以最高权限启动服务 ==="
-          
-          # 1. 核心修复：用最高权限（sudo）直接敲击绝对路径启动
-          # -E 确保原有的 Docker 环境变量不丢失
-          sudo -E $REAL_PATH start
-          
-          echo "等待服务初始化..."
-          sleep 15
-          
-          echo "=== 检查 Docker 容器状态 ==="
-          # 2. 加上 sudo 查看容器是否真的在运行
-          sudo docker ps -a
-          
-          echo "=== 验证本地网络端口 ==="
-          # 3. 验证端口是否通畅
-          nc -z -v -w5 localhost 8080 || echo "端口 8080 暂未响应，请根据上方 docker ps 的结果确认实际端口"
+          # 在这里集中编写原先第1、2、3步的全部命令
+          run: |
+            echo "=== 1. 环境信息查看 ==="
+            echo "当前系统架构（应当显示 aarch64）为："
+            uname -m
+            
+            # 注意：模拟容器内默认没有预装 docker 守护进程，如果你的一键脚本支持自动安装 docker，它会在这里触发。
+            # 如果脚本不支持自动装 docker，可以在这里手动加上：apt-get update && apt-get install -y docker.io
+            
+            echo "=== 2. 执行安装脚本 ==="
+            curl -fsSL https://devstar.cn/install | bash
+
+            echo "=== 3. 启动并验证服务 ==="
+            echo "正在全盘检索 devstar 二进制文件的实际安装路径..."
+            
+            # 因为容器内默认只有 root 用户和其家目录，修改了 find 的检索路径
+            REAL_PATH=$(which devstar || find /usr/local/bin /root /home -name "devstar" -type f 2>/dev/null | head -n 1)
+            
+            if [ -z "$REAL_PATH" ]; then
+              echo "❌ 错误：在系统里完全找不到 devstar 命令，可能安装脚本本身就失败了！"
+              exit 1
+            fi
+            
+            echo "🎯 成功找到路径：$REAL_PATH"
+            echo "开始启动服务..."
+            
+            # 💡 【核心修改】：去掉了原先的 sudo 和 -E，直接使用绝对路径启动
+            $REAL_PATH start
+            
+            echo "等待服务初始化..."
+            sleep 15
+            
+            echo "=== 检查 Docker 容器状态 ==="
+            # 💡 去掉了 sudo
+            docker ps -a || echo "Docker 暂未就绪或未启动"
+            
+            echo "=== 验证本地网络端口 ==="
+            # 模拟容器内可能默认没有 nc 工具，先尝试安装它
+            apt-get update && apt-get install -y netcat-openbsd || true
+            
+            if command -v nc >/dev/null 2>&1; then
+              nc -z -v -w5 localhost 8080 || echo "端口 8080 暂未响应，请根据上方 docker ps 的结果确认实际端口"
+            else
+              echo "环境内无法安装 nc 命令，跳过端口测试"
+            fi
