@@ -80,6 +80,11 @@ jobs:
             echo "=== 1. 环境信息查看 ==="
             echo "当前系统架构（应当显示 aarch64）为："
             uname -m
+
+            echo "=== 1.2 初始化自动化测试环境变量 ==="
+            export GITHUB_ACTIONS=true
+            touch /tmp/mock_github_path
+            export GITHUB_PATH=/tmp/mock_github_path
             
             # 💡 【核心修复】：由于是纯净容器，必须先安装 curl
             echo "=== 1.5 正在容器内安装基础依赖 curl ==="
