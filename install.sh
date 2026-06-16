@@ -251,7 +251,7 @@ install_docker_official() {
 # Aliyun 镜像安装 Docker —— Ubuntu/Debian（30s 超时）
 install_docker_aliyun_apt() {
     echo "Installing Docker via Aliyun mirror for Debian/Ubuntu (timeout: 30s)..."
-    timeout 300 bash -c "
+    timeout 600 bash -c "
         set -e
         sudo mkdir -p /etc/apt/keyrings
         curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg \
