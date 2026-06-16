@@ -1,0 +1,51 @@
+name: test_arm
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # 任务 1：Ubuntu 22.04 x86_64 本地安装测试
+  test-x86_64:
+    name: Ubuntu 22.04 (arm) 本地安装
+    runs-on: ubuntu-22.04-arm
+
+    steps:
+      - name: 1. 检出代码
+        uses: actions/checkout@v4
+
+      - name: 2. 环境信息查看
+        run: |
+          echo "当前系统架构："
+          uname -m
+          echo "工作目录内容："
+          ls -la
+
+      - name: 3. 执行本地安装脚本 (bash installer)
+        timeout-minutes: 10
+        run: |
+          bash installer
+
+      - name: 4. 启动并验证服务 (devstar start)
+        timeout-minutes: 10
+        run: |
+          echo "=== 检索 devstar 二进制文件路径 ==="
+          REAL_PATH=$(which devstar || find /usr/local/bin /home/runner -name "devstar" -type f 2>/dev/null | head -n 1)
+
+          if [ -z "$REAL_PATH" ]; then
+            echo "❌ 错误：找不到 devstar 命令，安装脚本可能失败！"
+            exit 1
+          fi
+
+          echo "🎯 找到路径：$REAL_PATH"
+          echo "=== 启动服务 ==="
+
+          sudo -E $REAL_PATH start
+
+          echo "等待服务初始化..."
+          sleep 15
+
+          echo "=== Docker 容器状态 ==="
+          sudo docker ps -a
+
+          echo "=== 验证端口 ==="
+          nc -z -v -w5 localhost 8080 || echo "端口 8080 暂未响应"
