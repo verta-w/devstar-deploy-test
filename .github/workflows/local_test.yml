@@ -1,1 +1,122 @@
-# 本地安装测试
+name: 本地安装测试
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # 任务 1：Ubuntu 22.04 x86_64 本地安装测试
+  test-x86_64:
+    name: Ubuntu 22.04 (x86_64) 本地安装
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: 1. 检出代码
+        uses: actions/checkout@v4
+
+      - name: 2. 环境信息查看
+        run: |
+          echo "当前系统架构："
+          uname -m
+          echo "工作目录内容："
+          ls -la
+
+      - name: 3. 执行本地安装脚本 (bash installer)
+        timeout-minutes: 10
+        run: |
+          bash installer
+
+      - name: 4. 启动并验证服务 (devstar start)
+        timeout-minutes: 10
+        run: |
+          echo "=== 检索 devstar 二进制文件路径 ==="
+          REAL_PATH=$(which devstar || find /usr/local/bin /home/runner -name "devstar" -type f 2>/dev/null | head -n 1)
+
+          if [ -z "$REAL_PATH" ]; then
+            echo "❌ 错误：找不到 devstar 命令，安装脚本可能失败！"
+            exit 1
+          fi
+
+          echo "🎯 找到路径：$REAL_PATH"
+          echo "=== 启动服务 ==="
+
+          sudo -E $REAL_PATH start
+
+          echo "等待服务初始化..."
+          sleep 15
+
+          echo "=== Docker 容器状态 ==="
+          sudo docker ps -a
+
+          echo "=== 验证端口 ==="
+          nc -z -v -w5 localhost 8080 || echo "端口 8080 暂未响应"
+
+  # 任务 2：Ubuntu 22.04 ARM64 本地安装测试（QEMU 模拟）
+  test-arm64:
+    name: Ubuntu 22.04 (ARM64) 本地安装
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: 1. 检出代码
+        uses: actions/checkout@v4
+
+      - name: 2. 配置 QEMU 跨架构运行环境
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: 3. 在模拟的 Ubuntu 22.04 ARM64 环境中执行本地安装测试
+        uses: uraimo/run-on-arch-action@v2
+        with:
+          arch: aarch64
+          distro: ubuntu22.04
+
+          env: |
+            DEBIAN_FRONTEND: noninteractive
+
+          # 将仓库文件挂载进 ARM64 容器，实现本地安装测试
+          dockerRunArgs: |
+            --volume "${GITHUB_WORKSPACE}:/workspace"
+
+          run: |
+            echo "=== 1. 环境信息查看 ==="
+            echo "当前系统架构（应为 aarch64）："
+            uname -m
+
+            echo "=== 1.2 安装基础依赖 ==="
+            apt-get update
+            apt-get install -y curl sudo iproute2
+
+            echo "=== 2. 进入工作目录，执行本地安装脚本 ==="
+            cd /workspace
+            ls -la
+            bash installer
+
+            echo "=== 3. 启动并验证服务 ==="
+            echo "检索 devstar 二进制文件路径..."
+
+            REAL_PATH=$(which devstar || find /usr/local/bin /root /home -name "devstar" -type f 2>/dev/null | head -n 1)
+
+            if [ -z "$REAL_PATH" ]; then
+              echo "❌ 错误：找不到 devstar 命令，安装脚本可能失败！"
+              exit 1
+            fi
+
+            echo "🎯 找到路径：$REAL_PATH"
+            echo "=== 启动服务 ==="
+
+            $REAL_PATH start
+
+            echo "等待服务初始化..."
+            sleep 15
+
+            echo "=== Docker 容器状态 ==="
+            docker ps -a || echo "Docker 暂未就绪"
+
+            echo "=== 验证端口 ==="
+            apt-get install -y netcat-openbsd || true
+
+            if command -v nc >/dev/null 2>&1; then
+              nc -z -v -w5 localhost 8080 || echo "端口 8080 暂未响应"
+            else
+              echo "无法安装 nc，跳过端口测试"
+            fi
