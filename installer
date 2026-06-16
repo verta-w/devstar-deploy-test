@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# Copyright 2026 Mengning Software All rights reserved.
+set -euo pipefail
+APP=devstar
+
+MUTED='\033[0;2m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+ORANGE='\033[38;5;214m'
+NC='\033[0m' # No Color
+
+INSTALL_DIR=$HOME/.devstar/
+mkdir -p "$INSTALL_DIR"
+no_modify_path=false
+specific_version="${VERSION:-latest}"
+filename="devstar"
+url="https://devstar.cn/assets/install.sh"
+local_install_sh="./install.sh"  # 本地测试
+
+detect_os_arch() {
+    raw_os=$(uname -s)
+    os=$(echo "$raw_os" | tr '[:upper:]' '[:lower:]')
+    case "$raw_os" in
+      Darwin*) os="darwin" ;;
+      Linux*) os="linux" ;;
+      MINGW*|MSYS*|CYGWIN*) os="windows" ;;
+    esac
+
+    arch=$(uname -m)
+    if [[ "$arch" == "aarch64" ]]; then
+      arch="arm64"
+    fi
+    if [[ "$arch" == "x86_64" ]]; then
+      arch="x64"
+    fi
+
+    if [ "$os" = "darwin" ] && [ "$arch" = "x64" ]; then
+      rosetta_flag=$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)
+      if [ "$rosetta_flag" = "1" ]; then
+        arch="arm64"
+      fi
+    fi
+
+    combo="$os-$arch"
+    case "$combo" in
+      linux-x64|linux-arm64|darwin-x64|darwin-arm64|windows-x64)
+        ;;
+      *)
+        echo -e "${RED}Unsupported OS/Arch: $os/$arch${NC}"
+        exit 1
+        ;;
+    esac
+}
+
+download_with_progress() {
+    local url="$1"
+    local output="$2"
+
+    curl -L "$url" --progress-bar -o "$output"
+}
+
+download_and_install() {
+    echo -e "\n${MUTED}Installing ${NC}devstar ${MUTED}version: ${NC}$specific_version"
+    local tmp_dir="${TMPDIR:-/tmp}/devstar_install_$$"
+    mkdir -p "$tmp_dir"
+
+    # if [[ "$os" == "windows" ]] || ! [ -t 2 ] || ! download_with_progress "$url" "$tmp_dir/$filename"; then
+    #     # Fallback to standard curl on Windows, non-TTY environments, or if custom progress fails
+    #     curl -# -L -o "$tmp_dir/$filename" "$url"
+    # fi
+
+    # # if [ "$os" = "linux" ]; then
+    # #     tar -xzf "$tmp_dir/$filename" -C "$tmp_dir"
+    # # else
+    # #     unzip -q "$tmp_dir/$filename" -d "$tmp_dir"
+    # # fi
+
+    if [[ -f "$local_install_sh" ]]; then
+          echo -e "${MUTED}Using local install.sh: ${NC}$local_install_sh"
+          cp "$local_install_sh" "$tmp_dir/$filename"
+      elif [[ "$os" == "windows" ]] || ! [ -t 2 ] || ! download_with_progress "$url" "$tmp_dir/$filename"; then
+          # Fallback to standard curl on Windows, non-TTY environments, or if custom progress fails
+          curl -# -L -o "$tmp_dir/$filename" "$url"
+      fi
+
+    mv "$tmp_dir/devstar" "$INSTALL_DIR"
+    chmod 755 "${INSTALL_DIR}/devstar"
+    rm -rf "$tmp_dir"
+}
+
+detect_os_arch
+download_and_install
+
+add_to_path() {
+    local config_file=$1
+    local command=$2
+
+    if grep -Fxq "$command" "$config_file"; then
+        echo -e "Command already exists in $config_file, skipping write."
+    elif [[ -w $config_file ]]; then
+        echo -e "\n# devstar" >> "$config_file"
+        echo "$command" >> "$config_file"
+        echo -e "${MUTED}Successfully added ${NC}devstar ${MUTED}to \$PATH in ${NC}$config_file"
+    else
+        echo -e "${RED}Warning: Cannot write to $config_file${NC}"
+        echo -e "${MUTED}Manually add the directory to $config_file (or similar):${NC}"
+        echo -e "  $command"
+    fi
+}
+
+XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
+
+current_shell=$(basename "$SHELL")
+case $current_shell in
+    fish)
+        config_files="$HOME/.config/fish/config.fish"
+    ;;
+    zsh)
+        config_files="${ZDOTDIR:-$HOME}/.zshrc ${ZDOTDIR:-$HOME}/.zshenv $XDG_CONFIG_HOME/zsh/.zshrc $XDG_CONFIG_HOME/zsh/.zshenv"
+    ;;
+    bash)
+        config_files="$HOME/.bashrc $HOME/.bash_profile $HOME/.profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile"
+    ;;
+    ash)
+        config_files="$HOME/.ashrc $HOME/.profile /etc/profile"
+    ;;
+    sh)
+        config_files="$HOME/.ashrc $HOME/.profile /etc/profile"
+    ;;
+    *)
+        # Default case if none of the above matches
+        config_files="$HOME/.bashrc $HOME/.bash_profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile"
+    ;;
+esac
+
+if [[ "$no_modify_path" != "true" ]]; then
+    config_file=""
+    for file in $config_files; do
+        if [[ -f $file ]]; then
+            config_file=$file
+            break
+        fi
+    done
+
+    if [[ -z $config_file ]]; then
+        # print_message warning "No config file found for $current_shell. You may need to manually add to PATH:"
+        # echo -e "  export PATH=$INSTALL_DIR:\$PATH"
+
+        config_file="$HOME/.profile"
+        echo -e "\n# devstar" >> "$config_file"
+        echo "export PATH=$INSTALL_DIR:\$PATH" >> "$config_file"
+        echo -e "${MUTED}Created ${NC}$config_file ${MUTED}with devstar PATH${NC}"
+    elif [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+        case $current_shell in
+            fish)
+                add_to_path "$config_file" "fish_add_path $INSTALL_DIR"
+            ;;
+            zsh)
+                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+            ;;
+            bash)
+                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+            ;;
+            ash)
+                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+            ;;
+            sh)
+                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+            ;;
+            *)
+                export PATH=$INSTALL_DIR:$PATH
+                echo -e "${MUTED}Manually add the directory to $config_file (or similar):${NC}"
+                echo -e "  export PATH=$INSTALL_DIR:\$PATH"
+            ;;
+        esac
+    fi
+fi
+
+# 对 bash：额外确保 .profile 也有 PATH，覆盖 login shell（newgrp、SSH 等）
+if [[ "$current_shell" == "bash" ]]; then
+    for login_file in "$HOME/.profile" "$HOME/.bash_profile"; do
+        if [[ -f "$login_file" ]]; then
+            add_to_path "$login_file" "export PATH=$INSTALL_DIR:\$PATH" 2>/dev/null || true
+            break
+        fi
+    done
+fi
+
+export PATH=$INSTALL_DIR:$PATH
+echo -e "Reload your shell config to use devstar in your current terminal, run:"
+echo -e "  ${MUTED}source ~/.bashrc${NC}   # bash"
+echo -e "  ${MUTED}source ~/.zshrc${NC}    # zsh"
+echo -e ""
+# whereis devstar
+command -v devstar && echo "devstar is $(command -v devstar)" || echo "devstar not found in PATH"
+devstar install_dependencies
+devstar help
+
+if [ -n "${GITHUB_ACTIONS-}" ] && [ "${GITHUB_ACTIONS}" == "true" ]; then
+    echo "$INSTALL_DIR" >> $GITHUB_PATH
+    echo -e "Added $INSTALL_DIR to \$GITHUB_PATH"
+fi
+echo " "
+echo "╔══════════════════════════════════════════════════════════════════════════════════╗"
+echo "║                   DevStar Studio  © Mengning Software 2026                       ║"
+echo "╚══════════════════════════════════════════════════════════════════════════════════╝"
+echo " "
+echo -e ""
+echo -e "${GREEN}DevStar Studio : The Last Mile of AI for R&D${NC}"
+echo -e ""
+echo -e "${RED}                 Make it possible to code everything.${NC}"
+echo -e ""
+echo -e "DevStar Studio is All-in-One Platform for R&D, to start:${NC}"
+echo -e ""
+echo -e "$ devstar start      ${MUTED}# Run command to deploy DevStar Studio ${NC}"
+echo -e ""
+echo -e "${MUTED}For more information visit ${NC}https://mengning.com.cn"
+echo -e ""
+echo -e ""
+
+if [[ "$os" == "linux" ]]; then
+    exec newgrp docker
+elif [[ "$os" == "darwin" ]]; then
+    exec $SHELL -l
+fi
+
+
