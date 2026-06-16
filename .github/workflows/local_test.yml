@@ -84,7 +84,7 @@ jobs:
 
             echo "=== 1.2 安装基础依赖 ==="
             apt-get update
-            apt-get install -y curl sudo iproute2
+            apt-get install -y curl sudo iproute2 gnupg
 
             echo "=== 2. 进入工作目录，执行本地安装脚本 ==="
             cd /workspace
