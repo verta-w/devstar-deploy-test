@@ -25,6 +25,7 @@ jobs:
       - name: 3. 执行本地安装脚本 (bash installer)
         timeout-minutes: 10
         run: |
+          apt-get update && apt-get install -y sudo
           bash installer
 
       - name: 4. 启动并验证服务 (devstar start)
