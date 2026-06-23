@@ -30,7 +30,7 @@ jobs:
         run: docker ps
 
       - name: devstar start
-        run: sudo env "PATH=$PATH" devstar start
+        run: devstar start
 
       - name: docker ps (after start)
         run: docker ps

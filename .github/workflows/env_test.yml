@@ -1,5 +1,7 @@
 name: env_test
 
+on:
+  workflow_dispatch:
 
 jobs:
   ubuntu-x86_64:
