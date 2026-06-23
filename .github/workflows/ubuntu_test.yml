@@ -29,7 +29,7 @@ jobs:
 
       - name: devstar start
         shell: bash --login {0}
-        run: sudo devstar start
+        run: sudo env "PATH=$PATH" devstar start
 
       - name: docker ps (after start)
         run: docker ps
