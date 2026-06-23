@@ -90,8 +90,8 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'if command -v docker &>/dev/null; then
-               echo "docker found: $(which docker)"
+            'if command -v docker >/dev/null 2>&1; then
+               echo "docker found: $(command -v docker)"
                docker --version
              else
                echo "docker NOT found"
