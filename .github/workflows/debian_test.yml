@@ -97,6 +97,12 @@ jobs:
                echo "docker NOT found"
              fi'
 
+      - name: Install prerequisites
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'sudo apt update && sudo apt install -y curl gpg apt-transport-https ca-certificates'
+
       - name: Install via install script
         run: |
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
