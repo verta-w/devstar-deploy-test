@@ -54,13 +54,12 @@ jobs:
 
       - name: Boot VM
         run: |
-          # Ubuntu 24.04 的 OVMF 固件自带 4M 版本
-          UEFI=$(ls /usr/share/OVMF/OVMF_CODE*.fd 2>/dev/null | head -1)
-          echo "Using UEFI: $UEFI"
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd /tmp/OVMF_VARS.fd
           qemu-system-x86_64 \
             -m 2048 -smp 2 \
             -machine q35,accel=tcg \
-            -bios "$UEFI" \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+            -drive if=pflash,format=raw,file=/tmp/OVMF_VARS.fd \
             -netdev user,id=net0,hostfwd=tcp::2222-:22 \
             -device virtio-net-pci,netdev=net0 \
             -drive file=/tmp/base.qcow2,format=qcow2,if=virtio \
