@@ -62,8 +62,20 @@ jobs:
             -device virtio-net-pci,netdev=net0 \
             -drive file=/tmp/base.qcow2,format=qcow2,if=virtio \
             -drive file=/tmp/seed.img,format=raw,if=virtio \
-            -nographic &
-          echo "QEMU PID: $!"
+            -display none \
+            -serial file:/tmp/qemu-serial.log \
+            -monitor none \
+            &
+          QEMU_PID=$!
+          echo "QEMU PID: $QEMU_PID"
+          # 等几秒确认 QEMU 没立刻挂
+          sleep 3
+          if ! kill -0 $QEMU_PID 2>/dev/null; then
+            echo "QEMU crashed at startup!"
+            echo "=== Serial log ==="
+            cat /tmp/qemu-serial.log 2>/dev/null || true
+            exit 1
+          fi
 
       - name: Wait for SSH
         run: |
@@ -74,7 +86,14 @@ jobs:
               echo "SSH ready ($((i*5))s)" && exit 0
             sleep 5
           done
-          echo "SSH timeout" && exit 1
+          echo "=== SSH timeout - debugging ==="
+          echo "--- QEMU process ---"
+          pgrep -fa qemu || echo "QEMU not running!"
+          echo "--- Serial console (last 80 lines) ---"
+          tail -80 /tmp/qemu-serial.log 2>/dev/null || echo "No serial log"
+          echo "--- Port 2222 ---"
+          ss -tlnp | grep 2222 || echo "Port 2222 not listening"
+          exit 1
 
       - name: Show system info
         run: |
