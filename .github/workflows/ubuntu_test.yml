@@ -24,13 +24,13 @@ jobs:
           fi
 
       - name: Install via install script
-        run: curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh
+        run: curl -fsSL https://devstar.cn/install -o install.sh && sudo bash install.sh
 
       - name: docker ps (after install)
         run: docker ps
 
       - name: devstar start
-        run: devstar start
+        run: sudo devstar start
 
       - name: docker ps (after start)
         run: docker ps
@@ -53,13 +53,13 @@ jobs:
           fi
 
       - name: Install via install script
-        run: curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh
+        run: curl -fsSL https://devstar.cn/install -o install.sh && sudo bash install.sh
 
       - name: docker ps (after install)
         run: docker ps
 
       - name: devstar start
-        run: devstar start
+        run: sudo devstar start
 
       - name: docker ps (after start)
         run: docker ps
