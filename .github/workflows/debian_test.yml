@@ -136,7 +136,7 @@ jobs:
 
   debian-arm64-qemu:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Install QEMU
         run: sudo apt update && sudo apt install -y qemu-system-arm qemu-efi-aarch64 qemu-utils cloud-image-utils openssh-client
@@ -166,11 +166,18 @@ jobs:
 
       - name: VM Deploy - Boot VM
         run: |
-          cp /usr/share/AAVMF/AAVMF_VARS.fd /tmp/AAVMF_VARS.fd
+          # 动态查找 AAVMF 固件路径
+          CODE_FD=$(ls /usr/share/AAVMF/AAVMF_CODE*.fd 2>/dev/null | head -1)
+          VARS_FD=$(ls /usr/share/AAVMF/AAVMF_VARS*.fd 2>/dev/null | head -1)
+          echo "UEFI CODE: $CODE_FD"
+          echo "UEFI VARS: $VARS_FD"
+          [ -z "$CODE_FD" ] && echo "AAVMF_CODE not found!" && exit 1
+          [ -z "$VARS_FD" ] && echo "AAVMF_VARS not found!" && exit 1
+          cp "$VARS_FD" /tmp/AAVMF_VARS.fd
           qemu-system-aarch64 \
             -m 2048 -smp 2 \
             -machine virt,accel=tcg \
-            -drive if=pflash,format=raw,readonly=on,file=/usr/share/AAVMF/AAVMF_CODE.fd \
+            -drive if=pflash,format=raw,readonly=on,file="$CODE_FD" \
             -drive if=pflash,format=raw,file=/tmp/AAVMF_VARS.fd \
             -netdev user,id=net0,hostfwd=tcp::2222-:22 \
             -device virtio-net-pci,netdev=net0 \
@@ -182,21 +189,30 @@ jobs:
             &
           QEMU_PID=$!
           echo "QEMU PID: $QEMU_PID"
-          sleep 3
+          sleep 5
           if ! kill -0 $QEMU_PID 2>/dev/null; then
             echo "QEMU crashed at startup!"
             echo "=== Serial log ==="
             cat /tmp/qemu-serial.log 2>/dev/null || true
             exit 1
           fi
+          # 检查串口，确认 UEFI 开始引导
+          echo "=== Serial console (first 20 lines) ==="
+          head -20 /tmp/qemu-serial.log 2>/dev/null || true
 
       - name: VM Deploy - Wait for SSH
         run: |
-          for i in $(seq 1 90); do
+          for i in $(seq 1 150); do
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
               -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu \
               -p 2222 tester@localhost 'exit' 2>/dev/null && \
               echo "SSH ready ($((i*5))s)" && exit 0
+            # 每 30 次打印一次进度
+            if [ $((i % 30)) -eq 0 ]; then
+              echo "  Still waiting... ($((i*5))s elapsed)"
+              echo "  Serial tail:"
+              tail -5 /tmp/qemu-serial.log 2>/dev/null | sed 's/^/    /' || true
+            fi
             sleep 5
           done
           echo "=== SSH timeout - debugging ==="
