@@ -2,8 +2,6 @@ name: Ubuntu Test
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 jobs:
   ubuntu-x86_64:
@@ -24,12 +22,13 @@ jobs:
           fi
 
       - name: Install via install script
-        run: curl -fsSL https://devstar.cn/install -o install.sh && sudo bash install.sh
+        run: curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh
 
       - name: docker ps (after install)
         run: docker ps
 
       - name: devstar start
+        shell: bash --login {0}
         run: devstar start
 
       - name: docker ps (after start)
