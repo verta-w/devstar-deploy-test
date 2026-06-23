@@ -62,7 +62,8 @@ jobs:
             -device virtio-net-pci,netdev=net0 \
             -drive file=/tmp/base.qcow2,format=qcow2,if=virtio \
             -drive file=/tmp/seed.img,format=raw,if=virtio \
-            -nographic -daemonize
+            -nographic &
+          echo "QEMU PID: $!"
 
       - name: Wait for SSH
         run: |
