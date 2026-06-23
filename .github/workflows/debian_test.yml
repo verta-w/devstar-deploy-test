@@ -13,15 +13,15 @@ jobs:
       - name: Install QEMU
         run: sudo apt update && sudo apt install -y qemu-system-x86 ovmf qemu-utils cloud-image-utils openssh-client
 
-      - name: Generate SSH key
+      - name: VM Deploy - Generate SSH key
         run: ssh-keygen -t ed25519 -f ~/.ssh/id_qemu -N "" -q
 
-      - name: Download Debian cloud image
+      - name: VM Deploy - Download Debian cloud image
         run: |
           wget -q --show-progress -O /tmp/base.qcow2 \
             https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2
 
-      - name: Create cloud-init seed
+      - name: VM Deploy - Create cloud-init seed
         run: |
           cat > /tmp/user-data << 'EOF'
           #cloud-config
@@ -36,7 +36,7 @@ jobs:
           echo -e "instance-id: debian-x86_64\nlocal-hostname: debian-x86_64" > /tmp/meta-data
           cloud-localds /tmp/seed.img /tmp/user-data /tmp/meta-data
 
-      - name: Boot VM
+      - name: VM Deploy - Boot VM
         run: |
           cp /usr/share/OVMF/OVMF_VARS_4M.fd /tmp/OVMF_VARS.fd
           qemu-system-x86_64 \
@@ -62,7 +62,7 @@ jobs:
             exit 1
           fi
 
-      - name: Wait for SSH
+      - name: VM Deploy - Wait for SSH
         run: |
           for i in $(seq 1 90); do
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
@@ -80,11 +80,46 @@ jobs:
           ss -tlnp | grep 2222 || echo "Port 2222 not listening"
           exit 1
 
-      - name: Show system info
+      - name: VM Deploy - Show system info
         run: |
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -i ~/.ssh/id_qemu -p 2222 tester@localhost \
             'echo "System: $(. /etc/os-release && echo $NAME $VERSION)" && echo "Architecture: $(uname -m)"'
+
+      - name: Check docker command
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'if command -v docker &>/dev/null; then
+               echo "docker found: $(which docker)"
+               docker --version
+             else
+               echo "docker NOT found"
+             fi'
+
+      - name: Install via install script
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh'
+
+      - name: docker ps (after install)
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'docker ps'
+
+      - name: devstar start
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'sudo env "PATH=$PATH" devstar start'
+
+      - name: docker ps (after start)
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'docker ps'
 
       - name: Shutdown VM
         if: always()
