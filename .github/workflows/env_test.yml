@@ -1,4 +1,4 @@
-name: env_test_qemu
+name: env_test
 
 on:
   workflow_dispatch:
@@ -6,216 +6,18 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    name: "${{ matrix.os }} ${{ matrix.arch }}"
-    runs-on: ${{ matrix.arch == 'x86_64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # ── Ubuntu ──────────────────────────────────
-          - os: ubuntu
-            arch: x86_64
-            image_url: >-
-              https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
-            qemu_bin: qemu-system-x86_64
-            qemu_pkg: qemu-system-x86
-            uefi_pkg: ovmf
-            uefi_bios: /usr/share/OVMF/OVMF_CODE.fd
-            machine: q35
-
-          - os: ubuntu
-            arch: arm64
-            image_url: >-
-              https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-arm64.img
-            qemu_bin: qemu-system-aarch64
-            qemu_pkg: qemu-system-arm
-            uefi_pkg: qemu-efi-aarch64
-            uefi_bios: /usr/share/AAVMF/AAVMF_CODE.fd
-            machine: virt
-
-          # ── Debian ──────────────────────────────────
-          - os: debian
-            arch: x86_64
-            image_url: >-
-              https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2
-            qemu_bin: qemu-system-x86_64
-            qemu_pkg: qemu-system-x86
-            uefi_pkg: ovmf
-            uefi_bios: /usr/share/OVMF/OVMF_CODE.fd
-            machine: q35
-
-          - os: debian
-            arch: arm64
-            image_url: >-
-              https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-arm64.qcow2
-            qemu_bin: qemu-system-aarch64
-            qemu_pkg: qemu-system-arm
-            uefi_pkg: qemu-efi-aarch64
-            uefi_bios: /usr/share/AAVMF/AAVMF_CODE.fd
-            machine: virt
-
-          # ── CentOS Stream 9 ─────────────────────────
-          - os: centos
-            arch: x86_64
-            image_url: ""   # 动态获取最新版本
-            qemu_bin: qemu-system-x86_64
-            qemu_pkg: qemu-system-x86
-            uefi_pkg: ovmf
-            uefi_bios: /usr/share/OVMF/OVMF_CODE.fd
-            machine: q35
-            centos_arch_dir: x86_64
-
-          - os: centos
-            arch: arm64
-            image_url: ""   # 动态获取最新版本
-            qemu_bin: qemu-system-aarch64
-            qemu_pkg: qemu-system-arm
-            uefi_pkg: qemu-efi-aarch64
-            uefi_bios: /usr/share/AAVMF/AAVMF_CODE.fd
-            machine: virt
-            centos_arch_dir: aarch64
-
+  ubuntu-x86_64:
+    runs-on: ubuntu-latest
     steps:
-      # ── 1. 安装依赖 ────────────────────────────────
-      - name: Install QEMU & tools
+      - name: Show system info
         run: |
-          sudo apt update
-          sudo apt install -y \
-            ${{ matrix.qemu_pkg }} \
-            ${{ matrix.uefi_pkg }} \
-            qemu-utils \
-            cloud-image-utils \
-            openssh-client
+          echo "System: $(. /etc/os-release && echo $NAME $VERSION)"
+          echo "Architecture: $(uname -m)"
 
-      # ── 2. 生成 SSH 密钥 ───────────────────────────
-      - name: Generate SSH key
+  ubuntu-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Show system info
         run: |
-          mkdir -p ~/.ssh
-          ssh-keygen -t ed25519 -f ~/.ssh/id_qemu -N "" -q
-          echo "SSH_PUBKEY=$(cat ~/.ssh/id_qemu.pub)" >> "$GITHUB_ENV"
-
-      # ── 3. 下载云镜像 ──────────────────────────────
-      - name: Download cloud image
-        run: |
-          mkdir -p /tmp/qemu-vm && cd /tmp/qemu-vm
-
-          if [ -n "${{ matrix.image_url }}" ]; then
-            # Ubuntu / Debian：直接下载
-            echo "Downloading ${{ matrix.image_url }}"
-            wget -q --show-progress -O base.qcow2 "${{ matrix.image_url }}"
-          else
-            # CentOS Stream：从目录列表获取最新版本
-            CENTOS_MIRROR="https://cloud.centos.org/centos/9-stream/${{ matrix.centos_arch_dir }}/images"
-            echo "Fetching latest CentOS Stream image from $CENTOS_MIRROR"
-            LATEST_FILE=$(curl -sL "$CENTOS_MIRROR/" \
-              | grep -oP 'href="\K[^"]+GenericCloud[^"]+\.qcow2(?=")' \
-              | sort -V | tail -1)
-            if [ -z "$LATEST_FILE" ]; then
-              echo "ERROR: Could not find CentOS image"; exit 1
-            fi
-            echo "Found: $LATEST_FILE"
-            wget -q --show-progress -O base.qcow2 "$CENTOS_MIRROR/$LATEST_FILE"
-          fi
-
-          echo "Image info:"
-          qemu-img info base.qcow2
-
-      # ── 4. 创建 cloud-init 种子镜像 ────────────────
-      - name: Create cloud-init seed
-        run: |
-          cd /tmp/qemu-vm
-
-          cat > user-data << 'CLOUDINIT'
-          #cloud-config
-          users:
-            - name: tester
-              sudo: ALL=(ALL) NOPASSWD:ALL
-              lock_passwd: true
-              ssh_authorized_keys:
-                - __SSH_PUBKEY__
-          CLOUDINIT
-
-          # 替换 SSH 公钥占位符
-          sed -i "s|__SSH_PUBKEY__|$SSH_PUBKEY|" user-data
-
-          cat > meta-data << META
-          instance-id: ${{ matrix.os }}-${{ matrix.arch }}
-          local-hostname: ${{ matrix.os }}-${{ matrix.arch }}
-          META
-
-          cat > network-config << NET
-          version: 2
-          ethernets:
-            eth0:
-              dhcp4: true
-          NET
-
-          cloud-localds seed.img user-data meta-data network-config
-          echo "Seed image created"
-
-      # ── 5. 启动 QEMU 虚拟机 ─────────────────────────
-      - name: Boot VM
-        run: |
-          cd /tmp/qemu-vm
-
-          echo "Starting QEMU VM..."
-          ${{ matrix.qemu_bin }} \
-            -m 2048 \
-            -smp 2 \
-            -machine type=${{ matrix.machine }},accel=tcg \
-            -bios ${{ matrix.uefi_bios }} \
-            -netdev user,id=net0,hostfwd=tcp::2222-:22 \
-            -device virtio-net-pci,netdev=net0 \
-            -drive file=base.qcow2,format=qcow2,if=virtio \
-            -drive file=seed.img,format=raw,if=virtio \
-            -nographic \
-            -daemonize
-
-          echo "QEMU PID: $(pgrep -f '${{ matrix.qemu_bin }}')"
-
-      # ── 6. 等待 SSH 就绪 ────────────────────────────
-      - name: Wait for SSH
-        run: |
-          echo "Waiting for SSH on port 2222..."
-          for i in $(seq 1 120); do
-            if ssh \
-              -o StrictHostKeyChecking=no \
-              -o ConnectTimeout=5 \
-              -o UserKnownHostsFile=/dev/null \
-              -i ~/.ssh/id_qemu \
-              -p 2222 \
-              tester@localhost 'exit' 2>/dev/null; then
-              echo "SSH is ready after $((i * 5)) seconds"
-              exit 0
-            fi
-            echo "  Attempt $i/120 — retrying in 5s..."
-            sleep 5
-          done
-          echo "ERROR: SSH did not become ready within 10 minutes"
-          exit 1
-
-      # ── 7. 执行测试命令 ─────────────────────────────
-      - name: Run test
-        run: |
-          ssh \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu \
-            -p 2222 \
-            tester@localhost \
-            'echo "System: $(. /etc/os-release && echo $NAME)" && echo "Architecture: $(uname -m)"'
-
-      # ── 8. 关闭虚拟机 ──────────────────────────────
-      - name: Shutdown VM
-        if: always()
-        run: |
-          ssh \
-            -o StrictHostKeyChecking=no \
-            -o ConnectTimeout=5 \
-            -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu \
-            -p 2222 \
-            tester@localhost 'sudo poweroff' 2>/dev/null || true
-          echo "VM shutdown sent"
+          echo "System: $(. /etc/os-release && echo $NAME $VERSION)"
+          echo "Architecture: $(uname -m)"
