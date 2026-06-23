@@ -1,0 +1,94 @@
+name: Debian Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  debian-x86_64-qemu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install QEMU
+        run: sudo apt update && sudo apt install -y qemu-system-x86 ovmf qemu-utils cloud-image-utils openssh-client
+
+      - name: Generate SSH key
+        run: ssh-keygen -t ed25519 -f ~/.ssh/id_qemu -N "" -q
+
+      - name: Download Debian cloud image
+        run: |
+          wget -q --show-progress -O /tmp/base.qcow2 \
+            https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2
+
+      - name: Create cloud-init seed
+        run: |
+          cat > /tmp/user-data << 'EOF'
+          #cloud-config
+          users:
+            - name: tester
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              lock_passwd: true
+              ssh_authorized_keys:
+                - __KEY__
+          EOF
+          sed -i "s|__KEY__|$(cat ~/.ssh/id_qemu.pub)|" /tmp/user-data
+          echo -e "instance-id: debian-x86_64\nlocal-hostname: debian-x86_64" > /tmp/meta-data
+          cloud-localds /tmp/seed.img /tmp/user-data /tmp/meta-data
+
+      - name: Boot VM
+        run: |
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd /tmp/OVMF_VARS.fd
+          qemu-system-x86_64 \
+            -m 2048 -smp 2 \
+            -machine q35,accel=tcg \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+            -drive if=pflash,format=raw,file=/tmp/OVMF_VARS.fd \
+            -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+            -device virtio-net-pci,netdev=net0 \
+            -drive file=/tmp/base.qcow2,format=qcow2,if=virtio \
+            -drive file=/tmp/seed.img,format=raw,if=virtio \
+            -display none \
+            -serial file:/tmp/qemu-serial.log \
+            -monitor none \
+            &
+          QEMU_PID=$!
+          echo "QEMU PID: $QEMU_PID"
+          sleep 3
+          if ! kill -0 $QEMU_PID 2>/dev/null; then
+            echo "QEMU crashed at startup!"
+            echo "=== Serial log ==="
+            cat /tmp/qemu-serial.log 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: Wait for SSH
+        run: |
+          for i in $(seq 1 90); do
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+              -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu \
+              -p 2222 tester@localhost 'exit' 2>/dev/null && \
+              echo "SSH ready ($((i*5))s)" && exit 0
+            sleep 5
+          done
+          echo "=== SSH timeout - debugging ==="
+          echo "--- QEMU process ---"
+          pgrep -fa qemu || echo "QEMU not running!"
+          echo "--- Serial console (last 80 lines) ---"
+          tail -80 /tmp/qemu-serial.log 2>/dev/null || echo "No serial log"
+          echo "--- Port 2222 ---"
+          ss -tlnp | grep 2222 || echo "Port 2222 not listening"
+          exit 1
+
+      - name: Show system info
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'echo "System: $(. /etc/os-release && echo $NAME $VERSION)" && echo "Architecture: $(uname -m)"'
+
+      - name: Shutdown VM
+        if: always()
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+            -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu \
+            -p 2222 tester@localhost 'sudo poweroff' 2>/dev/null || true
