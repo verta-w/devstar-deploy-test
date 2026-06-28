@@ -162,18 +162,54 @@ jobs:
           echo -e "instance-id: debian-arm64\nlocal-hostname: debian-arm64" > /tmp/meta-data
           cloud-localds /tmp/seed.img /tmp/user-data /tmp/meta-data
 
+      - name: VM Deploy - Extract kernel from cloud image
+        run: |
+          # ARM TCG 下 AAVMF UEFI 固件不输出到串口，改用直接引导内核
+          # 通过 qemu-nbd 挂载 qcow2 镜像提取内核和 initrd
+          sudo modprobe nbd max_part=8 2>/dev/null || true
+          sudo qemu-nbd --connect=/dev/nbd0 /tmp/base.qcow2
+          sleep 3
+          echo "=== Partition layout ==="
+          sudo fdisk -l /dev/nbd0 || sudo blkid /dev/nbd0* || true
+          # 遍历分区，找到包含内核的根分区
+          ROOT_PART=""
+          ROOT_IDX=""
+          for idx in 1 2 3 4; do
+            PART=/dev/nbd0p$idx
+            [ -b "$PART" ] || continue
+            echo "Trying $PART..."
+            if sudo mount -o ro $PART /mnt 2>/dev/null; then
+              ls /mnt/boot/ 2>/dev/null || true
+              KERNEL=$(sudo find /mnt -name "vmlinuz-*" -type f -o -name "vmlinuz" -type f 2>/dev/null | head -1)
+              if [ -n "$KERNEL" ]; then
+                ROOT_PART=$PART
+                ROOT_IDX=$idx
+                echo "Found kernel: $KERNEL on $PART"
+                sudo cp -L "$KERNEL" /tmp/vmlinuz
+                INITRD=$(sudo find /mnt -name "initrd.img-*" -type f -o -name "initrd.img" -type f 2>/dev/null | head -1)
+                [ -n "$INITRD" ] && sudo cp -L "$INITRD" /tmp/initrd
+                sudo umount /mnt
+                break
+              fi
+              sudo umount /mnt
+            fi
+          done
+          sudo qemu-nbd --disconnect /dev/nbd0
+          [ -z "$ROOT_PART" ] && echo "ERROR: Could not find root partition with kernel!" && exit 1
+          [ ! -f /tmp/vmlinuz ] && echo "ERROR: Kernel not extracted!" && exit 1
+          [ ! -f /tmp/initrd ] && echo "ERROR: Initrd not extracted!" && exit 1
+          sudo chmod 644 /tmp/vmlinuz /tmp/initrd
+          echo "ROOT_IDX=$ROOT_IDX" > /tmp/root-info.env
+          echo "Kernel: $(ls -lh /tmp/vmlinuz)"
+          echo "Initrd: $(ls -lh /tmp/initrd)"
+          echo "Root partition index: $ROOT_IDX"
+
       - name: VM Deploy - Boot VM
         run: |
-          # 动态查找 AAVMF 固件路径
-          CODE_FD=$(ls /usr/share/AAVMF/AAVMF_CODE*.fd 2>/dev/null | head -1)
-          VARS_FD=$(ls /usr/share/AAVMF/AAVMF_VARS*.fd 2>/dev/null | head -1)
-          echo "UEFI CODE: $CODE_FD"
-          echo "UEFI VARS: $VARS_FD"
-          [ -z "$CODE_FD" ] && echo "AAVMF_CODE not found!" && exit 1
-          [ -z "$VARS_FD" ] && echo "AAVMF_VARS not found!" && exit 1
-          cp "$VARS_FD" /tmp/AAVMF_VARS.fd
+          # 读取根分区信息
+          source /tmp/root-info.env
 
-          # 检测 KVM 可用性（ARM runner 可能支持硬件加速）
+          # 检测 KVM 可用性
           if [ -e /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
             ACCEL="kvm"
             echo "KVM available, using hardware acceleration"
@@ -182,11 +218,13 @@ jobs:
             echo "KVM not available, using TCG (software emulation)"
           fi
 
+          # 直接引导内核（绕过 UEFI 固件，内核直接输出到串口）
           qemu-system-aarch64 \
             -m 2048 -smp 2 \
             -machine virt,accel=$ACCEL,gic-version=3 \
-            -drive if=pflash,format=raw,readonly=on,file="$CODE_FD" \
-            -drive if=pflash,format=raw,file=/tmp/AAVMF_VARS.fd \
+            -kernel /tmp/vmlinuz \
+            -initrd /tmp/initrd \
+            -append "console=ttyAMA0 root=/dev/vda${ROOT_IDX} rw net.ifnames=0" \
             -netdev user,id=net0,hostfwd=tcp::2222-:22 \
             -device virtio-net-pci,netdev=net0 \
             -drive file=/tmp/base.qcow2,format=qcow2,if=virtio \
@@ -203,12 +241,9 @@ jobs:
             cat /tmp/qemu-serial.log 2>/dev/null || true
             exit 1
           fi
-          # 检查串口，确认 UEFI 开始引导
-          echo "=== QEMU process ==="
-          ps aux | grep qemu | grep -v grep || true
           echo "=== Serial log size: $(wc -l < /tmp/qemu-serial.log 2>/dev/null || echo 0) lines ==="
-          echo "=== Serial console (all content) ==="
-          cat /tmp/qemu-serial.log 2>/dev/null || echo "(empty)"
+          echo "=== Serial console (first 30 lines) ==="
+          head -30 /tmp/qemu-serial.log 2>/dev/null || echo "(empty)"
 
       - name: VM Deploy - Wait for SSH
         run: |
