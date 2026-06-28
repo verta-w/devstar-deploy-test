@@ -1,0 +1,35 @@
+name: Mac Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - name: Show system info
+        run: |
+          echo "System: $(sw_vers -productName) $(sw_vers -productVersion)"
+          echo "Architecture: $(uname -m)"
+
+      - name: Check docker command
+        run: |
+          if command -v docker &>/dev/null; then
+            echo "docker found: $(which docker)"
+            docker --version
+          else
+            echo "docker NOT found"
+          fi
+
+      - name: Install via install script
+        run: curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh
+
+      - name: docker ps (after install)
+        run: docker ps
+
+      - name: devstar start
+        shell: bash --login {0}
+        run: sudo env "PATH=$PATH" devstar start
+
+      - name: docker ps (after start)
+        run: docker ps
