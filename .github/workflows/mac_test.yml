@@ -20,8 +20,8 @@ jobs:
             exit 0
           fi
 
-          echo "=== Installing colima and qemu ==="
-          brew install qemu colima
+          echo "=== Installing docker CLI, colima and qemu ==="
+          brew install docker qemu colima
 
           echo "=== Starting colima with QEMU backend ==="
           # QEMU 是纯软件模拟，不需要嵌套虚拟化支持，可以在 macOS VM runner 里运行

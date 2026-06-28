@@ -2,8 +2,6 @@ name: Debian Test
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 jobs:
   debian-x86_64-qemu:
