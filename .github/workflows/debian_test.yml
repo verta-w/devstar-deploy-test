@@ -172,18 +172,27 @@ jobs:
           [ -z "$CODE_FD" ] && echo "AAVMF_CODE not found!" && exit 1
           [ -z "$VARS_FD" ] && echo "AAVMF_VARS not found!" && exit 1
           cp "$VARS_FD" /tmp/AAVMF_VARS.fd
+
+          # 检测 KVM 可用性（ARM runner 可能支持硬件加速）
+          if [ -e /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+            ACCEL="kvm"
+            echo "KVM available, using hardware acceleration"
+          else
+            ACCEL="tcg"
+            echo "KVM not available, using TCG (software emulation)"
+          fi
+
           qemu-system-aarch64 \
             -m 2048 -smp 2 \
-            -machine virt,accel=tcg \
+            -machine virt,accel=$ACCEL,gic-version=3 \
             -drive if=pflash,format=raw,readonly=on,file="$CODE_FD" \
             -drive if=pflash,format=raw,file=/tmp/AAVMF_VARS.fd \
             -netdev user,id=net0,hostfwd=tcp::2222-:22 \
             -device virtio-net-pci,netdev=net0 \
             -drive file=/tmp/base.qcow2,format=qcow2,if=virtio \
             -drive file=/tmp/seed.img,format=raw,if=virtio \
-            -display none \
+            -nographic \
             -serial file:/tmp/qemu-serial.log \
-            -monitor none \
             &
           QEMU_PID=$!
           echo "QEMU PID: $QEMU_PID"
@@ -195,8 +204,11 @@ jobs:
             exit 1
           fi
           # 检查串口，确认 UEFI 开始引导
-          echo "=== Serial console (first 20 lines) ==="
-          head -20 /tmp/qemu-serial.log 2>/dev/null || true
+          echo "=== QEMU process ==="
+          ps aux | grep qemu | grep -v grep || true
+          echo "=== Serial log size: $(wc -l < /tmp/qemu-serial.log 2>/dev/null || echo 0) lines ==="
+          echo "=== Serial console (all content) ==="
+          cat /tmp/qemu-serial.log 2>/dev/null || echo "(empty)"
 
       - name: VM Deploy - Wait for SSH
         run: |
