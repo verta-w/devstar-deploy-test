@@ -23,9 +23,34 @@ jobs:
           echo "=== Installing docker CLI, colima and qemu ==="
           brew install docker qemu colima
 
-          echo "=== Starting colima with QEMU backend ==="
-          # QEMU 是纯软件模拟，不需要嵌套虚拟化支持，可以在 macOS VM runner 里运行
-          colima start --vm-type qemu --cpu 2 --memory 4 --disk 30
+          echo "=== Host virtualization check ==="
+          echo "HVF support: $(sysctl -n kern.hv_support 2>/dev/null || echo 'unknown')"
+
+          echo "=== Starting colima with QEMU backend (TCG, minimal resources) ==="
+          # 在 CI 的 macOS VM 里，嵌套虚拟化不可用，QEMU 必须用 TCG（纯软件模拟）
+          # 减少资源避免被宿主机 OOM Kill
+          colima start \
+            --vm-type qemu \
+            --cpu 1 \
+            --memory 2 \
+            --disk 20 \
+            --verbose \
+            || {
+              rc=$?
+              echo "=== Colima failed (exit=$rc), dumping logs ==="
+              echo "--- serial log ---"
+              for f in /Users/runner/.colima/_lima/colima/serial*.log; do
+                echo "=== $f ==="
+                cat "$f" 2>/dev/null || echo "(not found)"
+              done
+              echo "--- ha.stderr.log ---"
+              cat /Users/runner/.colima/_lima/colima/ha.stderr.log 2>/dev/null || echo "(not found)"
+              echo "--- ha.stdout.log ---"
+              cat /Users/runner/.colima/_lima/colima/ha.stdout.log 2>/dev/null || echo "(not found)"
+              echo "--- qemu args ---"
+              grep -r "qemu" /Users/runner/.colima/_lima/colima/*.yaml 2>/dev/null || true
+              exit $rc
+            }
 
           echo "=== Docker info ==="
           docker info
