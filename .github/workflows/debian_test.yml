@@ -157,6 +157,12 @@ jobs:
               lock_passwd: true
               ssh_authorized_keys:
                 - __KEY__
+          # 同时设置 root 密码，以便通过串口登录调试
+          ssh_pwauth: true
+          chpasswd:
+            list: |
+              root:root
+            expire: false
           EOF
           sed -i "s|__KEY__|$(cat ~/.ssh/id_qemu.pub)|" /tmp/user-data
           echo -e "instance-id: debian-arm64\nlocal-hostname: debian-arm64" > /tmp/meta-data
@@ -164,50 +170,84 @@ jobs:
 
       - name: VM Deploy - Extract kernel from cloud image
         run: |
-          # ARM TCG 下 AAVMF UEFI 固件不输出到串口，改用直接引导内核
-          # 通过 qemu-nbd 挂载 qcow2 镜像提取内核和 initrd
-          sudo modprobe nbd max_part=8 2>/dev/null || true
-          sudo qemu-nbd --connect=/dev/nbd0 /tmp/base.qcow2
-          sleep 3
-          echo "=== Partition layout ==="
-          sudo fdisk -l /dev/nbd0 || sudo blkid /dev/nbd0* || true
-          # 遍历分区，找到包含内核的根分区
-          ROOT_PART=""
-          ROOT_IDX=""
-          for idx in 1 2 3 4; do
-            PART=/dev/nbd0p$idx
-            [ -b "$PART" ] || continue
-            echo "Trying $PART..."
-            if sudo mount -o ro $PART /mnt 2>/dev/null; then
-              ls /mnt/boot/ 2>/dev/null || true
-              KERNEL=$(sudo find /mnt -name "vmlinuz-*" -type f -o -name "vmlinuz" -type f 2>/dev/null | head -1)
-              if [ -n "$KERNEL" ]; then
-                ROOT_PART=$PART
-                ROOT_IDX=$idx
-                echo "Found kernel: $KERNEL on $PART"
-                sudo cp -L "$KERNEL" /tmp/vmlinuz
-                INITRD=$(sudo find /mnt -name "initrd.img-*" -type f -o -name "initrd.img" -type f 2>/dev/null | head -1)
-                [ -n "$INITRD" ] && sudo cp -L "$INITRD" /tmp/initrd
+          echo "=== Attempting to extract kernel/initrd from qcow2 ==="
+          # 方法1: 尝试从 Debian cloud 镜像站直接下载内核文件
+          BASE_URL="https://cloud.debian.org/images/cloud/bookworm/latest"
+          wget -q --spider "$BASE_URL/debian-12-genericcloud-arm64.vmlinuz" 2>/dev/null && \
+            wget -q "$BASE_URL/debian-12-genericcloud-arm64.vmlinuz" -O /tmp/vmlinuz && \
+            wget -q "$BASE_URL/debian-12-genericcloud-arm64.initrd" -O /tmp/initrd && \
+            echo "Downloaded kernel/initrd directly!" || \
+            echo "No separate kernel files at download URL"
+
+          # 方法2: 如果直接下载失败，通过 losetup 从 qcow2 提取
+          if [ ! -s /tmp/vmlinuz ] || [ ! -s /tmp/initrd ]; then
+            echo "=== Extracting from qcow2 via raw conversion ==="
+            qemu-img convert -O raw /tmp/base.qcow2 /tmp/base.raw
+            echo "Raw image created ($(ls -lh /tmp/base.raw | awk '{print $5}'))"
+            sudo losetup -P /dev/loop0 /tmp/base.raw
+            sleep 2
+            echo "=== Partition layout ==="
+            sudo fdisk -l /dev/loop0 || sudo blkid /dev/loop0* || true
+            ROOT_PART=""
+            ROOT_IDX=""
+            for idx in 1 2 3 4; do
+              PART=/dev/loop0p$idx
+              [ -b "$PART" ] || continue
+              echo "Trying $PART..."
+              if sudo mount -o ro $PART /mnt 2>/dev/null; then
+                echo "Mounted $PART, checking for kernel..."
+                ls /mnt/boot/ 2>/dev/null || true
+                KERNEL=$(sudo find /mnt -maxdepth 3 -name "vmlinuz-*" -type f 2>/dev/null | head -1)
+                [ -z "$KERNEL" ] && KERNEL=$(sudo find /mnt -maxdepth 3 -name "vmlinuz" -type f 2>/dev/null | head -1)
+                if [ -n "$KERNEL" ]; then
+                  ROOT_PART=$PART
+                  ROOT_IDX=$idx
+                  echo "Found kernel: $KERNEL"
+                  sudo cp -L "$KERNEL" /tmp/vmlinuz
+                  sudo chmod 644 /tmp/vmlinuz
+                  INITRD=$(sudo find /mnt -maxdepth 3 -name "initrd.img-*" -type f 2>/dev/null | head -1)
+                  [ -z "$INITRD" ] && INITRD=$(sudo find /mnt -maxdepth 3 -name "initrd.img" -type f 2>/dev/null | head -1)
+                  if [ -n "$INITRD" ]; then
+                    sudo cp -L "$INITRD" /tmp/initrd
+                    sudo chmod 644 /tmp/initrd
+                  fi
+                  # 提取根分区 UUID/LABEL
+                  ROOT_UUID=$(sudo blkid -s UUID -o value $PART 2>/dev/null || echo "")
+                  ROOT_LABEL=$(sudo blkid -s LABEL -o value $PART 2>/dev/null || echo "")
+                  echo "Root UUID: $ROOT_UUID"
+                  echo "Root LABEL: $ROOT_LABEL"
+                  # 提取 GRUB 内核命令行
+                  for cfg in /mnt/boot/grub/grub.cfg /mnt/boot/efi/EFI/debian/grub.cfg; do
+                    if [ -f "$cfg" ]; then
+                      CMDLINE=$(sudo grep "linux" "$cfg" | head -1 | sed 's/.*linux\s\+\/vmlinuz[^ ]*\s*//' || true)
+                      [ -n "$CMDLINE" ] && echo "GRUB cmdline: $CMDLINE" && break
+                    fi
+                  done
+                  sudo umount /mnt
+                  break
+                fi
                 sudo umount /mnt
-                break
               fi
-              sudo umount /mnt
-            fi
-          done
-          sudo qemu-nbd --disconnect /dev/nbd0
-          [ -z "$ROOT_PART" ] && echo "ERROR: Could not find root partition with kernel!" && exit 1
+            done
+            sudo losetup -d /dev/loop0
+            rm -f /tmp/base.raw
+            [ -z "$ROOT_PART" ] && echo "ERROR: Could not find root partition!" && exit 1
+          fi
+
           [ ! -f /tmp/vmlinuz ] && echo "ERROR: Kernel not extracted!" && exit 1
           [ ! -f /tmp/initrd ] && echo "ERROR: Initrd not extracted!" && exit 1
-          sudo chmod 644 /tmp/vmlinuz /tmp/initrd
-          echo "ROOT_IDX=$ROOT_IDX" > /tmp/root-info.env
-          echo "Kernel: $(ls -lh /tmp/vmlinuz)"
-          echo "Initrd: $(ls -lh /tmp/initrd)"
+          echo "ROOT_IDX=$ROOT_IDX" > /tmp/boot-config.env
+          echo "ROOT_UUID=$ROOT_UUID" >> /tmp/boot-config.env
+          echo "ROOT_LABEL=$ROOT_LABEL" >> /tmp/boot-config.env
+          echo "CMDLINE=${CMDLINE:-}" >> /tmp/boot-config.env
+          echo "Kernel: $(ls -lh /tmp/vmlinuz | awk '{print $5}')"
+          echo "Initrd: $(ls -lh /tmp/initrd | awk '{print $5}')"
           echo "Root partition index: $ROOT_IDX"
+          echo "Boot config saved to /tmp/boot-config.env"
 
       - name: VM Deploy - Boot VM
         run: |
-          # 读取根分区信息
-          source /tmp/root-info.env
+          source /tmp/boot-config.env
 
           # 检测 KVM 可用性
           if [ -e /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
@@ -218,13 +258,27 @@ jobs:
             echo "KVM not available, using TCG (software emulation)"
           fi
 
-          # 直接引导内核（绕过 UEFI 固件，内核直接输出到串口）
+          # 构建内核命令行：优先使用 GRUB 中的原始参数，否则用 fallback
+          if [ -n "$CMDLINE" ]; then
+            # 使用 GRUB 原始命令行，追加 cloud-init nocloud 数据源
+            APPEND="$CMDLINE ds=nocloud"
+          elif [ -n "$ROOT_LABEL" ]; then
+            APPEND="console=ttyAMA0 root=LABEL=$ROOT_LABEL ro ds=nocloud"
+          elif [ -n "$ROOT_UUID" ]; then
+            APPEND="console=ttyAMA0 root=UUID=$ROOT_UUID ro ds=nocloud"
+          else
+            APPEND="console=ttyAMA0 root=/dev/vda${ROOT_IDX:-1} ro ds=nocloud"
+          fi
+          echo "Kernel cmdline: $APPEND"
+
+          # 直接引导内核
           qemu-system-aarch64 \
             -m 2048 -smp 2 \
             -machine virt,accel=$ACCEL,gic-version=3 \
+            -cpu max \
             -kernel /tmp/vmlinuz \
             -initrd /tmp/initrd \
-            -append "console=ttyAMA0 root=/dev/vda${ROOT_IDX} rw net.ifnames=0" \
+            -append "$APPEND" \
             -netdev user,id=net0,hostfwd=tcp::2222-:22 \
             -device virtio-net-pci,netdev=net0 \
             -drive file=/tmp/base.qcow2,format=qcow2,if=virtio \
@@ -234,7 +288,7 @@ jobs:
             &
           QEMU_PID=$!
           echo "QEMU PID: $QEMU_PID"
-          sleep 5
+          sleep 10
           if ! kill -0 $QEMU_PID 2>/dev/null; then
             echo "QEMU crashed at startup!"
             echo "=== Serial log ==="
@@ -242,8 +296,8 @@ jobs:
             exit 1
           fi
           echo "=== Serial log size: $(wc -l < /tmp/qemu-serial.log 2>/dev/null || echo 0) lines ==="
-          echo "=== Serial console (first 30 lines) ==="
-          head -30 /tmp/qemu-serial.log 2>/dev/null || echo "(empty)"
+          echo "=== Serial console (all content) ==="
+          cat /tmp/qemu-serial.log 2>/dev/null || echo "(empty)"
 
       - name: VM Deploy - Wait for SSH
         run: |
