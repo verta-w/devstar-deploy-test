@@ -14,6 +14,8 @@ jobs:
           sudo apt-add-repository -y ppa:flexiondotorg/quickemu
           sudo apt update
           sudo apt install -y quickemu qemu-utils cloud-image-utils openssh-client
+          # GitHub Actions 宿主 runner 通常没有 KVM，尝试修复权限（有则用，无则跳过）
+          sudo chmod 666 /dev/kvm 2>/dev/null || echo "/dev/kvm not available (will use TCG)"
 
       - name: VM Deploy - Generate SSH key
         run: ssh-keygen -t ed25519 -f ~/.ssh/id_qemu -N "" -q
@@ -46,6 +48,7 @@ jobs:
           fixed_iso="/tmp/seed.img"
           port_forwards=("2222:22")
           delete_disk="false"
+          kvm="off"
           QFEOF
 
           echo "=== quickemu config ==="
@@ -156,6 +159,7 @@ jobs:
             }
           fi
           sudo apt install -y qemu-system-arm qemu-efi-aarch64 qemu-utils cloud-image-utils openssh-client
+          sudo chmod 666 /dev/kvm 2>/dev/null || echo "/dev/kvm not available (will use TCG)"
 
       - name: VM Deploy - Generate SSH key
         run: ssh-keygen -t ed25519 -f ~/.ssh/id_qemu -N "" -q
@@ -188,6 +192,7 @@ jobs:
           fixed_iso="/tmp/seed.img"
           port_forwards=("2222:22")
           delete_disk="false"
+          kvm="off"
           QFEOF
 
           echo "=== quickemu config ==="
