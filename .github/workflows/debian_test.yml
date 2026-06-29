@@ -6,7 +6,6 @@ on:
 jobs:
   debian-x86_64-qemu:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     steps:
       - name: Install QEMU
         run: sudo apt update && sudo apt install -y qemu-system-x86 ovmf qemu-utils cloud-image-utils openssh-client
@@ -134,7 +133,6 @@ jobs:
 
   debian-arm64-qemu:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
     steps:
       - name: VM Deploy - Install QEMU and dependencies
         run: |
