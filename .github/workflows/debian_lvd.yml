@@ -20,6 +20,8 @@ jobs:
         run: |
           sudo snap install lxd
           sudo lxd init --auto
+          # 禁用 lxdbr0 网桥的 IPv6，避免 GitHub Actions 嵌套 NAT 下网络不通
+          sudo lxc network set lxdbr0 ipv6.address none
 
       - name: Verify LXD
         run: |
@@ -33,6 +35,17 @@ jobs:
       - name: Wait for container
         run: |
           sleep 10
+
+      - name: Configure container network
+        run: |
+          sudo lxc exec debian-${{ matrix.name }} -- bash -c '
+            # 禁用 IPv6 避免双栈 fallback 超时
+            sysctl -w net.ipv6.conf.all.disable_ipv6=1
+            sysctl -w net.ipv6.conf.default.disable_ipv6=1
+            # 设置为公共 DNS 绕过 GitHub 环境 DNS 解析问题
+            echo "nameserver 8.8.8.8" > /etc/resolv.conf
+            echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+          '
 
       - name: Run command inside Debian
         run: |
