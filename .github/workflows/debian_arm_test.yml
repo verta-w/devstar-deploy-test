@@ -17,16 +17,18 @@ jobs:
         run: |
           wget -q https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-arm64.qcow2 -O debian.qcow2
           
-          # 明确指定创建 debian 用户，并赋予 sudo 权限，开启密码登录
+          # 使用更直接的 runcmd 来暴力重置密码并配置 SSHD
           cat << 'EOF' > user-data
           #cloud-config
-          users:
-            - name: debian
-              sudo: ALL=(ALL) NOPASSWD:ALL
-              lock_passwd: false
-              passwd: "$6$rounds=4096$activesalt$Z/S9Wp1b3z339hWnZtO1G4z4Y1D3B/M6BdBbXg1mN7." # 对应明文: mysecurepassword
-          ssh_pwauth: True
-          chpasswd: { expire: False }
+          ssh_pwauth: true
+          
+          # 直接使用系统的标准 shell 命令确保 debian 和 root 的密码百分之百被修改
+          runcmd:
+            - echo "debian:mysecurepassword" | chpasswd
+            - echo "root:mysecurepassword" | chpasswd
+            - sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+            - sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+            - systemctl restart sshd
           EOF
           
           cloud-localds seed.img user-data
@@ -54,21 +56,22 @@ jobs:
           
           echo -e "\n=== [2/2] Attempting to log into QEMU Debian VM ==="
           
-          # 循环重试 SSH 登录，最多等待 3 分钟 (18 * 10秒)
-          # 这样即使中间出现 Connection reset，也会自动重试直到内部系统彻底就绪
+          # TCG 模拟运行 cloud-init 脚本需要时间，把等待上限提升到 5 分钟 (30 * 10秒)
           SUCCESS=false
-          for i in {1..18}; do
-            echo "Attempting SSH connection (Try $i/18)..."
-            if sshpass -p "mysecurepassword" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -p 2222 debian@localhost \
+          for i in {1..30}; do
+            echo "Attempting SSH connection (Try $i/30)..."
+          
+            # 这里先尝试 root 登录（如果 debian 用户还没初始化完，root 通常已经就绪）
+            if sshpass -p "mysecurepassword" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -p 2222 root@localhost \
               "echo '--- Inside Debian VM ---' && uname -a && cat /etc/os-release | grep PRETTY_NAME && arch"; then
               SUCCESS=true
               break
             fi
-            echo "SSH not ready yet, sleeping 10 seconds..."
+            echo "SSH not ready yet or permission denied, sleeping 10 seconds..."
             sleep 10
           done
 
           if [ "$SUCCESS" = false ]; then
-            echo "Failed to connect to Debian VM via SSH after 3 minutes."
+            echo "Failed to connect to Debian VM via SSH after 5 minutes."
             exit 1
           fi
