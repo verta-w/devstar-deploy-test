@@ -134,121 +134,130 @@ jobs:
 
   debian-arm64-qemu:
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
     steps:
-            - name: 2. 安装 QEMU ARM64 虚拟化组件与 UEFI 固件
-              run: |
-                sudo apt-get update
-                # 安装 qemu-system-arm、AArch64 的 UEFI 固件 (QEMU_EFI) 以及 cloud-init 工具
-                sudo apt-get install -y qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils wget
+      - name: VM Deploy - Install QEMU and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils openssh-client wget
 
-            - name: 3. 下载并处理 Debian 12 官方 ARM64 云镜像
-              run: |
-                # 下载官方针对 AArch64 架构编译的 qcow2 镜像
-                wget https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-arm64.qcow2 -O debian_arm64.qcow2
-                # 放大磁盘至 20G 确保有足够的空间下载 Docker 镜像
-                qemu-img resize debian_arm64.qcow2 +15G
+      - name: VM Deploy - Generate SSH key
+        run: ssh-keygen -t ed25519 -f ~/.ssh/id_qemu -N "" -q
 
-            - name: 4. 配置 SSH 密钥与云端初始化参数 (tester 用户)
-              run: |
-                # 1. 创建宿主机的 ~/.ssh 目录并生成对应的 id_qemu 密钥
-                mkdir -p ~/.ssh
-                ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_qemu
-                chmod 600 ~/.ssh/id_qemu
-                
-                # 2. 编写 cloud-init 配置文件：创建 tester 用户、配置免密 sudo、注入公钥
-                cat << 'EOF' > user-data
-                #cloud-config
-                users:
-                  - name: tester
-                    sudo: ALL=(ALL) NOPASSWD:ALL
-                    shell: /bin/bash
-                    ssh_authorized_keys:
-                      - $(cat ~/.ssh/id_qemu.pub)
-                EOF
-                
-                # 3. 将配置文件打包为云镜像能识别的元数据盘
-                cloud-localds meta-data.img user-data
+      - name: VM Deploy - Download Debian ARM64 cloud image
+        run: |
+          wget -q --show-progress -O /tmp/debian-arm64.qcow2 \
+            https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-arm64.qcow2
 
-            - name: 5. 提取 UEFI 引导固件并利用 KVM 加速启动虚拟机
-              run: |
-                # 提取 ARM64 专用的 UEFI 固件文件
-                cp /usr/share/qemu-efi-aarch64/QEMU_EFI.fd ./
-                
-                # 后台运行 QEMU ARM64 虚拟机。
-                # 核心参数：
-                #   -enable-kvm -cpu host : 同架构下开启 KVM 硬件提速，性能近乎原生
-                #   -M virt -bios QEMU_EFI.fd : 采用 ARM 通用虚拟化板型和 UEFI 引导
-                #   hostfwd=tcp::2222-:22 : 将虚拟机内的 SSH 端口映射到外部宿主机的 2222 端口
-                qemu-system-aarch64 \
-                  -enable-kvm \
-                  -cpu host \
-                  -m 2048 \
-                  -smp 2 \
-                  -M virt \
-                  -bios ./QEMU_EFI.fd \
-                  -device virtio-blk-device,drive=hd0 \
-                  -drive if=none,file=debian_arm64.qcow2,id=hd0 \
-                  -device virtio-blk-device,drive=cd0 \
-                  -drive if=none,file=meta-data.img,id=cd0,media=cdrom \
-                  -netdev user,id=net0,hostfwd=tcp::2222-:22 \
-                  -device virtio-net-device,netdev=net0 \
-                  -nographic &
-                
-                # 循环探测虚拟机的 2222 端口，直到 SSH 彻底准备就绪
-                echo "正在等待原生 ARM64 Debian 虚拟机冷启动..."
-                until ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu -p 2222 tester@localhost "echo 'Ready'" >/dev/null 2>&1; do
-                  sleep 5
-                  echo "正在尝试握手..."
-                done
-                echo "原生 ARM64 Debian 12 虚拟机已就绪！开始执行测试流程："
+      - name: VM Deploy - Create cloud-init seed
+        run: |
+          cat > /tmp/user-data << 'EOF'
+          #cloud-config
+          users:
+            - name: tester
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              lock_passwd: true
+              ssh_authorized_keys:
+                - __KEY__
+          EOF
+          sed -i "s|__KEY__|$(cat ~/.ssh/id_qemu.pub)|" /tmp/user-data
+          echo -e "instance-id: debian-arm64\nlocal-hostname: debian-arm64" > /tmp/meta-data
+          cloud-localds /tmp/seed.img /tmp/user-data /tmp/meta-data
 
-        # ----------------------------------------------------------------
-        # 以下为你提供的 7 步完整项目部署与测试 Step 链条
-        # ----------------------------------------------------------------
+      - name: VM Deploy - Boot VM
+        run: |
+          qemu-system-aarch64 \
+            -machine virt \
+            -cpu max \
+            -smp 2 \
+            -m 2048 \
+            -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
+            -drive if=virtio,file=/tmp/debian-arm64.qcow2,format=qcow2 \
+            -drive if=virtio,file=/tmp/seed.img,format=raw \
+            -net nic,model=virtio \
+            -net user,hostfwd=tcp::2222-:22 \
+            -display none \
+            -serial file:/tmp/qemu-serial.log \
+            -monitor none \
+            &
+          QEMU_PID=$!
+          echo "QEMU PID: $QEMU_PID"
+          sleep 3
+          if ! kill -0 $QEMU_PID 2>/dev/null; then
+            echo "QEMU crashed at startup!"
+            echo "=== Serial log ==="
+            cat /tmp/qemu-serial.log 2>/dev/null || true
+            exit 1
+          fi
 
-            - name: VM Deploy - Show system info
-              run: |
-                ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                  -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-                  'echo "System: $(. /etc/os-release && echo $NAME $VERSION)" && echo "Architecture: $(uname -m)"'
+      - name: VM Deploy - Wait for SSH
+        run: |
+          for i in $(seq 1 90); do
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+              -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu \
+              -p 2222 tester@localhost 'exit' 2>/dev/null && \
+              echo "SSH ready ($((i*5))s)" && exit 0
+            sleep 5
+          done
+          echo "=== SSH timeout - debugging ==="
+          echo "--- QEMU process ---"
+          pgrep -fa qemu || echo "QEMU not running!"
+          echo "--- Serial console (last 80 lines) ---"
+          tail -80 /tmp/qemu-serial.log 2>/dev/null || echo "No serial log"
+          echo "--- Port 2222 ---"
+          ss -tlnp | grep 2222 || echo "Port 2222 not listening"
+          exit 1
 
-            - name: Check docker command
-              run: |
-                ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                  -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-                  'if command -v docker >/dev/null 2>&1; then
-                     echo "docker found: $(command -v docker)"
-                     docker --version
-                   else
-                     echo "docker NOT found"
-                   fi'
+      - name: VM Deploy - Show system info
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'echo "System: $(. /etc/os-release && echo $NAME $VERSION)" && echo "Architecture: $(uname -m)"'
 
-            - name: Install prerequisites
-              run: |
-                ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                  -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-                  'sudo apt update && sudo apt install -y curl gpg apt-transport-https ca-certificates'
+      - name: Check docker command
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'if command -v docker >/dev/null 2>&1; then
+               echo "docker found: $(command -v docker)"
+               docker --version
+             else
+               echo "docker NOT found"
+             fi'
 
-            - name: Install via install script
-              run: |
-                ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                  -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-                  'curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh'
+      - name: Install prerequisites
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'sudo apt update && sudo apt install -y curl gpg apt-transport-https ca-certificates'
 
-            - name: docker ps (after install)
-              run: |
-                ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                  -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-                  'docker ps'
+      - name: Install via install script
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh'
 
-            - name: devstar start
-              run: |
-                ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                  -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-                  '. ~/.profile && sudo env "PATH=$PATH" devstar start'
+      - name: docker ps (after install)
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'docker ps'
 
-            - name: docker ps (after start)
-              run: |
-                  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                    -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-                    'docker ps'
+      - name: devstar start
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            '. ~/.profile && sudo env "PATH=$PATH" devstar start'
+
+      - name: docker ps (after start)
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'docker ps'
+
+      - name: Shutdown VM
+        if: always()
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+            -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu \
+            -p 2222 tester@localhost 'sudo poweroff' 2>/dev/null || true
