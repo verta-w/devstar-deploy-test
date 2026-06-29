@@ -56,12 +56,10 @@ jobs:
           
           echo -e "\n=== [2/2] Attempting to log into QEMU Debian VM ==="
           
-          # TCG 模拟运行 cloud-init 脚本需要时间，把等待上限提升到 5 分钟 (30 * 10秒)
           SUCCESS=false
           for i in {1..30}; do
             echo "Attempting SSH connection (Try $i/30)..."
           
-            # 这里先尝试 root 登录（如果 debian 用户还没初始化完，root 通常已经就绪）
             if sshpass -p "mysecurepassword" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -p 2222 root@localhost \
               "echo '--- Inside Debian VM ---' && uname -a && cat /etc/os-release | grep PRETTY_NAME && arch"; then
               SUCCESS=true
@@ -75,3 +73,50 @@ jobs:
             echo "Failed to connect to Debian VM via SSH after 5 minutes."
             exit 1
           fi
+
+      # ==========================================
+      # 以下为您提供的项目部署验证步骤（已适配当前环境）
+      # ==========================================
+
+      - name: Check docker command
+        run: |
+          sshpass -p "mysecurepassword" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 root@localhost \
+            'if command -v docker >/dev/null 2>&1; then
+               echo "docker found: $(command -v docker)"
+               docker --version
+             else
+               echo "docker NOT found"
+             fi'
+
+      - name: Install prerequisites
+        run: |
+          sshpass -p "mysecurepassword" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 root@localhost \
+            'apt update && apt install -y curl gpg apt-transport-https ca-certificates'
+
+      - name: Install via install script
+        run: |
+          sshpass -p "mysecurepassword" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 root@localhost \
+            'curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh'
+
+      - name: docker ps (after install)
+        run: |
+          sshpass -p "mysecurepassword" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 root@localhost \
+            'docker ps'
+
+      - name: devstar start
+        run: |
+          # 1. 显式在命令开头 source ~/.profile 确保环境变量生效
+          # 2. 由于直接使用了 root 用户，去掉了命令内部不必要的 sudo
+          sshpass -p "mysecurepassword" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 root@localhost \
+            '[ -f ~/.profile ] && source ~/.profile; env "PATH=$PATH" devstar start'
+
+      - name: docker ps (after start)
+        run: |
+          sshpass -p "mysecurepassword" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 root@localhost \
+            'docker ps'
+
+      - name: Cleanup QEMU
+        if: always()
+        run: |
+          echo "Cleaning up QEMU process..."
+          pkill -f qemu-system-aarch64 || true
