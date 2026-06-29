@@ -1,10 +1,10 @@
-name: LXD Debian Test (x86 + ARM)
+name: LXD Debian Test Fixed
 
 on:
   workflow_dispatch:
 
 jobs:
-  test-debian:
+  test:
     strategy:
       matrix:
         include:
@@ -21,17 +21,22 @@ jobs:
           sudo snap install lxd
           sudo lxd init --auto
 
+      - name: Verify LXD
+        run: |
+          sudo lxc version
+          sudo lxc network list
+
       - name: Launch Debian container
         run: |
-          lxc launch images:debian/12 debian-${{ matrix.name }}
+          sudo lxc launch images:debian/12 debian-${{ matrix.name }}
 
       - name: Wait for container
         run: |
           sleep 10
 
-      - name: Run commands in Debian
+      - name: Run command inside Debian
         run: |
-          lxc exec debian-${{ matrix.name }} -- bash -c "
+          sudo lxc exec debian-${{ matrix.name }} -- bash -c "
             echo '===== ARCH ====='
             uname -m
             echo
@@ -42,4 +47,4 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          lxc delete debian-${{ matrix.name }} --force || true
+          sudo lxc delete debian-${{ matrix.name }} --force || true
