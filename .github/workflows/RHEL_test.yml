@@ -81,6 +81,7 @@ jobs:
           qemu-system-x86_64 \
             -m 2048 -smp 2 \
             -machine q35,accel=tcg \
+            -cpu max \
             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
             -drive if=pflash,format=raw,file=/tmp/OVMF_VARS.fd \
             -netdev user,id=net0,hostfwd=tcp::2222-:22 \
@@ -167,7 +168,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -i ~/.ssh/id_qemu -p 2222 cloud-user@localhost \
-            '. ~/.profile && sudo env "PATH=$PATH" devstar start'
+            '. ~/.profile 2>/dev/null; . ~/.bashrc 2>/dev/null; sudo env "PATH=$PATH" devstar start'
 
       - name: docker ps (after start)
         run: |
@@ -341,7 +342,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -i ~/.ssh/id_qemu -p 2222 cloud-user@localhost \
-            '. ~/.profile && sudo env "PATH=$PATH" devstar start'
+            '. ~/.profile 2>/dev/null; . ~/.bashrc 2>/dev/null; sudo env "PATH=$PATH" devstar start'
 
       - name: docker ps (after start)
         run: |
