@@ -10,7 +10,6 @@ env:
 jobs:
   rhel-x86_64-qemu:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     steps:
       - name: VM Deploy - Install QEMU and dependencies
         run: |
@@ -126,6 +125,15 @@ jobs:
             -i ~/.ssh/id_qemu -p 2222 cloud-user@localhost \
             'echo "System: $(. /etc/os-release && echo $NAME $VERSION)" && echo "Architecture: $(uname -m)"'
 
+      - name: VM Deploy - Register RHEL subscription
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 cloud-user@localhost \
+            'sudo subscription-manager register \
+               --username="${{ secrets.RH_USERNAME }}" \
+               --password="${{ secrets.RH_PASSWORD }}" \
+               --auto-attach'
+
       - name: Check docker command
         run: |
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -176,7 +184,6 @@ jobs:
 
   rhel-arm64-qemu:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 15
     steps:
       - name: VM Deploy - Install QEMU and dependencies
         run: |
@@ -291,6 +298,15 @@ jobs:
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -i ~/.ssh/id_qemu -p 2222 cloud-user@localhost \
             'echo "System: $(. /etc/os-release && echo $NAME $VERSION)" && echo "Architecture: $(uname -m)"'
+
+      - name: VM Deploy - Register RHEL subscription
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 cloud-user@localhost \
+            'sudo subscription-manager register \
+               --username="${{ secrets.RH_USERNAME }}" \
+               --password="${{ secrets.RH_PASSWORD }}" \
+               --auto-attach'
 
       - name: Check docker command
         run: |
