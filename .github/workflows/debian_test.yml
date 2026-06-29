@@ -133,7 +133,7 @@ jobs:
             -p 2222 tester@localhost 'sudo poweroff' 2>/dev/null || true
 
   debian-arm64-qemu:
-    runs-on: ubuntu-24.04-arm64
+    runs-on: ubuntu-24.04-arm
     steps:
             - name: 2. 安装 QEMU ARM64 虚拟化组件与 UEFI 固件
               run: |
