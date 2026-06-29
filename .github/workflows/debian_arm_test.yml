@@ -32,12 +32,10 @@ jobs:
 
       - name: Start Debian in QEMU
         run: |
-          # 确保 UEFI 固件文件存在（如果路径不同，可以安装 qemu-efi-aarch64 依赖）
-          # 使用 -display none 代替 -nographic，配合 -daemonize 完美在后台运行
+          # 去掉了 -enable-kvm，并将 -cpu host 改为了 -cpu max
           qemu-system-aarch64 \
             -machine virt \
-            -cpu host \
-            -enable-kvm \
+            -cpu max \
             -smp 2 \
             -m 2048 \
             -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
@@ -51,14 +49,14 @@ jobs:
       - name: Wait for SSH to be ready
         run: |
           echo "Waiting for Debian VM to boot and SSH to start..."
-          # 循环检测 2222 端口是否开放
-          for i in {1..30}; do
+          # 增加到 60 次，最多等待 300 秒
+          for i in {1..60}; do
             if nc -z localhost 2222; then
               echo "SSH port is open!"
-              sleep 5 # 给 SSH 进程一点初始化时间
+              sleep 10
               break
             fi
-            echo "Retrying in 5 seconds ($i/30)..."
+            echo "Retrying in 5 seconds ($i/60)..."
             sleep 5
           done
 
