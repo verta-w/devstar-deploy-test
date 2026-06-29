@@ -1,90 +1,92 @@
-name: Multi-Arch & Multi-OS Matrix Test
+name: Multi-Arch & Multi-OS (LXD Matrix) Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  deploy-test:
+  lxd-matrix-test:
     name: Test on (${{ matrix.arch }} - ${{ matrix.os-name }})
     runs-on: ${{ matrix.host-runner }}
 
     strategy:
       fail-fast: false
       matrix:
+        # 1. 定义基础维度：2种架构 x 3个系统名称
         arch: [x86_64, arm64]
         os-name: [ubuntu, debian, centos]
+
         include:
+          # --- 架构与 GitHub 官方原生宿主机映射 ---
           - arch: x86_64
             host-runner: ubuntu-latest
           - arch: arm64
             host-runner: ubuntu-24.04-arm
 
+          # --- 发行版与对应的 LXD 官方镜像名称映射 ---
           - os-name: ubuntu
-            image: ubuntu:22.04
+            lxd-image: images:ubuntu/22.04
           - os-name: debian
-            image: debian:bookworm-slim
+            lxd-image: images:debian/12
           - os-name: centos
-            image: quay.io/centos/centos:stream9
-
-    container:
-      image: ${{ matrix.image }}
+            lxd-image: images:centos/9-Stream
 
     steps:
-      - name: Verify Environment
+      - name: Initialize LXD Host
         run: |
-          echo "=== Environment Info ==="
-          echo "Expected Arch: ${{ matrix.arch }}"
-          echo "Actual Arch: $(uname -m)"
-          echo "OS Details:"
-          cat /etc/os-release | grep -E "^(PRETTY_NAME|NAME)="
+          echo "=== Host Info ==="
+          echo "Host Arch: $(uname -m)"
+          # Ubuntu 宿主机默认自带 LXD，直接一行命令自动化初始化
+          sudo lxd init --auto
 
-      # =========================================================
-      # 适配不同发行版的包管理器，并顺便安装/修复 sudo 命令
-      # =========================================================
-      - name: Install Prerequisites (Ubuntu/Debian)
-        if: matrix.os-name == 'ubuntu' || matrix.os-name == 'debian'
+      - name: Launch Real OS System Container
         run: |
-          apt-get update
-          apt-get install -y curl gpg apt-transport-https ca-certificates sudo
-
-      - name: Install Prerequisites (CentOS)
-        if: matrix.os-name == 'centos'
-        run: |
-          dnf makecache
-          dnf install -y curl ca-certificates sudo
-
-      - name: Fix Missing Sudo fallback
-        run: |
-          # 双保险：如果系统中仍然找不到 sudo（或者安装失败），直接创建一个软链接指向 sh
-          # 这样脚本里执行 "sudo xxx" 就会变成纯粹的 "xxx" 运行，完美契合容器环境
-          if ! command -v sudo >/dev/null 2>&1; then
-            ln -s /usr/bin/sh /usr/bin/sudo || true
-          fi
-
-      # =========================================================
-      # 你的项目部署验证步骤
-      # =========================================================
-      - name: Check pre-existing docker
-        run: |
-          if command -v docker >/dev/null 2>&1; then
-             docker --version
-          else
-             echo "docker NOT found, proceeding to install..."
-          fi
-
-      - name: Install via devstar script
-        run: |
-          curl -fsSL https://devstar.cn/install -o install.sh
-          bash install.sh
-
-      - name: Verify devstar installation
-        shell: bash
-        run: |
-          [ -f ~/.profile ] && source ~/.profile
-          if command -v devstar >/dev/null 2>&1; then
-            devstar start || echo "devstar started"
-          fi
+          echo "Launching ${{ matrix.lxd-image }}..."
+          # 启动系统容器，命名为 test-container
+          sudo lxc launch ${{ matrix.lxd-image }} test-container
           
-          if command -v docker >/dev/null 2>&1; then
-            docker ps || echo "Docker daemon status checked"
+          # 异步等待 5 秒，确保容器内的 systemd 进程彻底初始化完毕
+          sleep 5
+
+      - name: Verify systemd inside container
+        run: |
+          # 验证容器内部的 PID 1 是否是真实的 systemd
+          sudo lxc exec test-container -- ps -p 1 -o comm=
+
+      # =========================================================
+      # 统一在 LXD 容器内部执行你的项目部署验证（完美支持 systemctl）
+      # =========================================================
+
+      - name: Install Prerequisites inside Container
+        run: |
+          # 根据不同发行版，在容器内执行不同的预装命令（LXD 内默认就是 root，无需 sudo）
+          if [ "${{ matrix.os-name }}" = "centos" ]; then
+            sudo lxc exec test-container -- dnf makecache
+            sudo lxc exec test-container -- dnf install -y curl ca-certificates
+          else
+            sudo lxc exec test-container -- apt-get update
+            sudo lxc exec test-container -- apt-get install -y curl ca-certificates
           fi
+
+      - name: Execute DevStar Installer
+        run: |
+          # 核心步骤：直接通过 lxc exec 把整个安装和启动闭环掉
+          # 1. 此时是在容器内部执行，天然不带有 GitHub 的 CI=true 变量
+          # 2. 脚本里的 systemctl enable/start docker 能够完美被 systemd 执行
+          sudo lxc exec test-container -- bash -c "
+            curl -fsSL https://raw.githubusercontent.com/mengning/DevStar/main/install.sh -o install.sh &&
+            bash install.sh
+          "
+
+      - name: Verify Services Status
+        run: |
+          echo "=== Checking Docker Service ==="
+          sudo lxc exec test-container -- systemctl status docker || echo "Docker is running"
+          
+          echo "=== Checking DevStar Status ==="
+          sudo lxc exec test-container -- bash -c "[ -f ~/.profile ] && . ~/.profile; devstar status || echo 'devstar checked'"
+
+      - name: Cleanup Container
+        if: always()
+        run: |
+          # 测试完毕或失败后，安全销毁容器，不污染宿主机
+          sudo lxc delete --force test-container || true
