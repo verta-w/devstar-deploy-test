@@ -78,6 +78,7 @@ jobs:
           bash install.sh
 
       - name: Verify devstar installation
+        shell: bash
         run: |
           [ -f ~/.profile ] && source ~/.profile
           if command -v devstar >/dev/null 2>&1; then
