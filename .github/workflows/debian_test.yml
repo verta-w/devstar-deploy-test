@@ -134,7 +134,7 @@ jobs:
 
   debian-arm64-qemu:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: VM Deploy - Install QEMU and dependencies
         run: |
