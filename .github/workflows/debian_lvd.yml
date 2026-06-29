@@ -1,0 +1,45 @@
+name: LXD Debian Test (x86 + ARM)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-debian:
+    strategy:
+      matrix:
+        include:
+          - name: x86
+            runs-on: ubuntu-24.04
+          - name: arm
+            runs-on: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.runs-on }}
+
+    steps:
+      - name: Install LXD
+        run: |
+          sudo snap install lxd
+          sudo lxd init --auto
+
+      - name: Launch Debian container
+        run: |
+          lxc launch images:debian/12 debian-${{ matrix.name }}
+
+      - name: Wait for container
+        run: |
+          sleep 10
+
+      - name: Run commands in Debian
+        run: |
+          lxc exec debian-${{ matrix.name }} -- bash -c "
+            echo '===== ARCH ====='
+            uname -m
+            echo
+            echo '===== OS ====='
+            cat /etc/os-release
+          "
+
+      - name: Cleanup
+        if: always()
+        run: |
+          lxc delete debian-${{ matrix.name }} --force || true
