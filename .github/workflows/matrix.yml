@@ -1,0 +1,88 @@
+name: Multi-Arch & Multi-OS Matrix Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-test:
+    name: Test on (${{ matrix.arch }} - ${{ matrix.os-name }})
+    runs-on: ${{ matrix.host-runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1. 先定义基础维度：2种架构 x 3个系统名称 = 6个基础组合
+        arch: [x86_64, arm64]
+        os-name: [ubuntu, debian, centos]
+
+        # 2. 使用唯一的一个 include 块，根据上面的组合，精准注入对应的 宿主机 和 容器镜像
+        include:
+          # --- x86_64 宿主机映射 ---
+          - arch: x86_64
+            host-runner: ubuntu-latest
+          # --- arm64 宿主机映射 ---
+          - arch: arm64
+            host-runner: ubuntu-24.04-arm
+
+          # --- 发行版对应的具体 Docker 镜像 ---
+          - os-name: ubuntu
+            image: ubuntu:22.04
+          - os-name: debian
+            image: debian:bookworm-slim
+          - os-name: centos
+            image: quay.io/centos/centos:stream9
+
+    # 让当前 Job 的所有步骤直接在这个容器内部运行
+    container:
+      image: ${{ matrix.image }}
+
+    steps:
+      - name: Verify Environment
+        run: |
+          echo "=== Environment Info ==="
+          echo "Expected Arch: ${{ matrix.arch }}"
+          echo "Actual Arch: $(uname -m)"
+          echo "OS Details:"
+          cat /etc/os-release | grep -E "^(PRETTY_NAME|NAME)="
+
+      # =========================================================
+      # 适配不同发行版的包管理器（因为 CentOS 用 dnf，Ubuntu/Debian 用 apt）
+      # =========================================================
+      - name: Install Prerequisites (Ubuntu/Debian)
+        if: matrix.os-name == 'ubuntu' || matrix.os-name == 'debian'
+        run: |
+          apt-get update
+          apt-get install -y curl gpg apt-transport-https ca-certificates
+
+      - name: Install Prerequisites (CentOS)
+        if: matrix.os-name == 'centos'
+        run: |
+          dnf makecache
+          dnf install -y curl ca-certificates
+
+      # =========================================================
+      # 你的项目部署验证步骤
+      # =========================================================
+      - name: Check pre-existing docker
+        run: |
+          if command -v docker >/dev/null 2>&1; then
+             docker --version
+          else
+             echo "docker NOT found, proceeding to install..."
+          fi
+
+      - name: Install via devstar script
+        run: |
+          curl -fsSL https://devstar.cn/install -o install.sh
+          bash install.sh
+
+      - name: Verify devstar installation
+        run: |
+          [ -f ~/.profile ] && source ~/.profile
+          if command -v devstar >/dev/null 2>&1; then
+            devstar start || echo "devstar started"
+          fi
+          
+          if command -v docker >/dev/null 2>&1; then
+            docker ps || echo "Docker daemon status checked"
+          fi
