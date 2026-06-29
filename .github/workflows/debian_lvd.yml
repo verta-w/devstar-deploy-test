@@ -44,6 +44,56 @@ jobs:
             cat /etc/os-release
           "
 
+      # -------------------------
+      # Docker check
+      # -------------------------
+      - name: Check Docker exists
+        run: |
+          sudo lxc exec debian-${{ matrix.name }} -- bash -c '
+            if command -v docker >/dev/null 2>&1; then
+              echo "docker found: $(command -v docker)"
+              docker --version
+            else
+              echo "docker NOT found"
+            fi
+          '
+
+      # -------------------------
+      # Install script
+      # -------------------------
+      - name: Download and run install script
+        run: |
+          sudo lxc exec debian-${{ matrix.name }} -- bash -c '
+            curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh
+          '
+
+      # -------------------------
+      # Docker ps after install
+      # -------------------------
+      - name: Docker ps after install
+        run: |
+          sudo lxc exec debian-${{ matrix.name }} -- bash -c '
+            docker ps
+          '
+
+      # -------------------------
+      # Start service
+      # -------------------------
+      - name: Start devstar service
+        run: |
+          sudo lxc exec debian-${{ matrix.name }} -- bash -c '
+            devstar start
+          '
+
+      # -------------------------
+      # Final docker check
+      # -------------------------
+      - name: Final docker ps
+        run: |
+          sudo lxc exec debian-${{ matrix.name }} -- bash -c '
+            docker ps
+          '
+
       - name: Cleanup
         if: always()
         run: |
