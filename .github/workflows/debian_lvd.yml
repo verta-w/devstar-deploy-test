@@ -44,6 +44,13 @@ jobs:
             cat /etc/os-release
           "
 
+      - name: Install curl in Debian
+        run: |
+          sudo lxc exec debian-${{ matrix.name }} -- bash -c '
+            apt-get update &&
+            apt-get install -y curl
+          '
+
       # -------------------------
       # Docker check
       # -------------------------
@@ -61,10 +68,11 @@ jobs:
       # -------------------------
       # Install script
       # -------------------------
-      - name: Download and run install script
+      - name: Run install script
         run: |
           sudo lxc exec debian-${{ matrix.name }} -- bash -c '
-            curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh
+            curl -fsSL https://devstar.cn/install -o install.sh &&
+            bash install.sh
           '
 
       # -------------------------
