@@ -12,8 +12,7 @@ jobs:
       - name: Install QEMU and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-arm qemu-utils u-boot-qemu sshpass wget
-
+          sudo apt-get install -y qemu-system-arm qemu-utils qemu-efi-aarch64 sshpass wget
       - name: Download Debian ARM64 qcow2 Image
         run: |
           # 下载 Debian 12 (Bookworm) 官方云镜像
@@ -33,20 +32,20 @@ jobs:
 
       - name: Start Debian in QEMU
         run: |
-          # 后台启动 QEMU 虚拟机
-          # 将虚拟机的 22 端口映射到宿主机的 2222 端口
+          # 确保 UEFI 固件文件存在（如果路径不同，可以安装 qemu-efi-aarch64 依赖）
+          # 使用 -display none 代替 -nographic，配合 -daemonize 完美在后台运行
           qemu-system-aarch64 \
             -machine virt \
             -cpu host \
             -enable-kvm \
             -smp 2 \
             -m 2048 \
-            -bios /usr/share/qemu/qemu-uefi-aarch64.bin \
+            -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
             -drive if=virtio,file=debian.qcow2,format=qcow2 \
             -drive if=virtio,file=seed.img,format=raw \
             -net nic,model=virtio \
             -net user,hostfwd=tcp::2222-:22 \
-            -nographic \
+            -display none \
             -daemonize
 
       - name: Wait for SSH to be ready
