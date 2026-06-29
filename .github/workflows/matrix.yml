@@ -11,20 +11,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 1. 先定义基础维度：2种架构 x 3个系统名称 = 6个基础组合
         arch: [x86_64, arm64]
         os-name: [ubuntu, debian, centos]
-
-        # 2. 使用唯一的一个 include 块，根据上面的组合，精准注入对应的 宿主机 和 容器镜像
         include:
-          # --- x86_64 宿主机映射 ---
           - arch: x86_64
             host-runner: ubuntu-latest
-          # --- arm64 宿主机映射 ---
           - arch: arm64
             host-runner: ubuntu-24.04-arm
 
-          # --- 发行版对应的具体 Docker 镜像 ---
           - os-name: ubuntu
             image: ubuntu:22.04
           - os-name: debian
@@ -32,7 +26,6 @@ jobs:
           - os-name: centos
             image: quay.io/centos/centos:stream9
 
-    # 让当前 Job 的所有步骤直接在这个容器内部运行
     container:
       image: ${{ matrix.image }}
 
@@ -46,19 +39,27 @@ jobs:
           cat /etc/os-release | grep -E "^(PRETTY_NAME|NAME)="
 
       # =========================================================
-      # 适配不同发行版的包管理器（因为 CentOS 用 dnf，Ubuntu/Debian 用 apt）
+      # 适配不同发行版的包管理器，并顺便安装/修复 sudo 命令
       # =========================================================
       - name: Install Prerequisites (Ubuntu/Debian)
         if: matrix.os-name == 'ubuntu' || matrix.os-name == 'debian'
         run: |
           apt-get update
-          apt-get install -y curl gpg apt-transport-https ca-certificates
+          apt-get install -y curl gpg apt-transport-https ca-certificates sudo
 
       - name: Install Prerequisites (CentOS)
         if: matrix.os-name == 'centos'
         run: |
           dnf makecache
-          dnf install -y curl ca-certificates
+          dnf install -y curl ca-certificates sudo
+
+      - name: Fix Missing Sudo fallback
+        run: |
+          # 双保险：如果系统中仍然找不到 sudo（或者安装失败），直接创建一个软链接指向 sh
+          # 这样脚本里执行 "sudo xxx" 就会变成纯粹的 "xxx" 运行，完美契合容器环境
+          if ! command -v sudo >/dev/null 2>&1; then
+            ln -s /usr/bin/sh /usr/bin/sudo || true
+          fi
 
       # =========================================================
       # 你的项目部署验证步骤
