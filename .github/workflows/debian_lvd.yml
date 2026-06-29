@@ -44,6 +44,13 @@ jobs:
             cat /etc/os-release
           "
 
+      - name: Install curl in Debian
+        run: |
+          sudo lxc exec debian-${{ matrix.name }} -- bash -c '
+            apt-get update &&
+            apt-get install -y curl
+          '
+
       # -------------------------
       # Docker check
       # -------------------------
