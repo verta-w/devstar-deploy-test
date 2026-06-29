@@ -1,0 +1,85 @@
+name: Debian ARM64 VM Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-arm \
+            qemu-efi-aarch64 \
+            qemu-utils \
+            cloud-image-utils \
+            openssh-client \
+            genisoimage \
+            wget \
+            netcat-openbsd
+
+      - name: Download Debian Cloud Image
+        run: |
+          wget -O debian.qcow2 \
+            https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-arm64.qcow2
+
+      - name: Create cloud-init config
+        run: |
+          cat > user-data <<EOF
+          #cloud-config
+          users:
+            - name: github
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              shell: /bin/bash
+              lock_passwd: false
+              passwd: \$6\$rounds=4096\$9h8wQ5wM\$D5yA4dC6jA3FQe2iTgM2kS7gSx0D4JqXv8Y8X4JwVY0xkQjDqQx5S2x5t8Fv5hA2OQ4wP7bY5qD5J5fR3k2L.
+              ssh_pwauth: true
+
+          chpasswd:
+            expire: false
+          EOF
+
+          touch meta-data
+
+          cloud-localds seed.img user-data meta-data
+
+      - name: Boot VM
+        run: |
+          qemu-system-aarch64 \
+            -machine virt \
+            -cpu cortex-a72 \
+            -m 2048 \
+            -smp 2 \
+            -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
+            -drive if=virtio,file=debian.qcow2,format=qcow2 \
+            -drive if=virtio,file=seed.img,format=raw \
+            -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+            -device virtio-net-pci,netdev=net0 \
+            -nographic \
+            >/tmp/qemu.log 2>&1 &
+      - name: Wait for SSH
+        run: |
+          for i in {1..60}; do
+            if nc -z localhost 2222; then
+              echo "SSH port ready"
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "VM failed to boot"
+          cat /tmp/qemu.log
+          exit 1
+
+      - name: Verify Debian
+        run: |
+          sshpass -p github \
+            ssh \
+            -o StrictHostKeyChecking=no \
+            -p 2222 github@localhost \
+            "echo 'Architecture:' && uname -m && \
+             echo && \
+             echo 'OS:' && cat /etc/os-release"
