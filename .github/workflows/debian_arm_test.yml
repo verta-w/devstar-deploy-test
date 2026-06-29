@@ -5,34 +5,34 @@ on:
 
 jobs:
   qemu-debian-arm:
-    # 使用 GitHub 提供的原生 ARM64 执行器
     runs-on: ubuntu-24.04-arm
 
     steps:
       - name: Install QEMU and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-arm qemu-utils qemu-efi-aarch64 sshpass wget
+          sudo apt-get install -y qemu-system-arm qemu-utils qemu-efi-aarch64 sshpass wget cloud-image-utils
+
       - name: Download Debian ARM64 qcow2 Image
         run: |
-          # 下载 Debian 12 (Bookworm) 官方云镜像
           wget -q https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-arm64.qcow2 -O debian.qcow2
           
-          # 创建一个 cloud-init 配置，用于配置默认密码并开启 SSH 登录
+          # 明确指定创建 debian 用户，并赋予 sudo 权限，开启密码登录
           cat << 'EOF' > user-data
           #cloud-config
-          password: mysecurepassword
-          chpasswd: { expire: False }
+          users:
+            - name: debian
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              lock_passwd: false
+              passwd: "$6$rounds=4096$activesalt$Z/S9Wp1b3z339hWnZtO1G4z4Y1D3B/M6BdBbXg1mN7." # 对应明文: mysecurepassword
           ssh_pwauth: True
+          chpasswd: { expire: False }
           EOF
           
-          # 生成 seed.img 并将其挂载为 cloud-init 数据源
-          sudo apt-get install -y cloud-image-utils
           cloud-localds seed.img user-data
 
       - name: Start Debian in QEMU
         run: |
-          # 去掉了 -enable-kvm，并将 -cpu host 改为了 -cpu max
           qemu-system-aarch64 \
             -machine virt \
             -cpu max \
@@ -46,28 +46,29 @@ jobs:
             -display none \
             -daemonize
 
-      - name: Wait for SSH to be ready
-        run: |
-          echo "Waiting for Debian VM to boot and SSH to start..."
-          # 增加到 60 次，最多等待 300 秒
-          for i in {1..60}; do
-            if nc -z localhost 2222; then
-              echo "SSH port is open!"
-              sleep 10
-              break
-            fi
-            echo "Retrying in 5 seconds ($i/60)..."
-            sleep 5
-          done
-
-      - name: Verify Host and Guest Architecture
+      - name: Wait and Verify SSH Connection
         run: |
           echo "=== [1/2] Current Github Actions Host Info ==="
           echo "Host Hostname: $(hostname)"
           echo "Host Architecture: $(uname -m)"
           
-          echo -e "\n=== [2/2] Logging into QEMU Debian VM ==="
-          # 使用 sshpass 配合刚才 cloud-init 设置的密码登录虚拟机
-          # 默认用户一般为 debian
-          sshpass -p "mysecurepassword" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 debian@localhost \
-            "echo '--- Inside Debian VM ---' && uname -a && cat /etc/os-release | grep PRETTY_NAME && arch"
+          echo -e "\n=== [2/2] Attempting to log into QEMU Debian VM ==="
+          
+          # 循环重试 SSH 登录，最多等待 3 分钟 (18 * 10秒)
+          # 这样即使中间出现 Connection reset，也会自动重试直到内部系统彻底就绪
+          SUCCESS=false
+          for i in {1..18}; do
+            echo "Attempting SSH connection (Try $i/18)..."
+            if sshpass -p "mysecurepassword" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -p 2222 debian@localhost \
+              "echo '--- Inside Debian VM ---' && uname -a && cat /etc/os-release | grep PRETTY_NAME && arch"; then
+              SUCCESS=true
+              break
+            fi
+            echo "SSH not ready yet, sleeping 10 seconds..."
+            sleep 10
+          done
+
+          if [ "$SUCCESS" = false ]; then
+            echo "Failed to connect to Debian VM via SSH after 3 minutes."
+            exit 1
+          fi
