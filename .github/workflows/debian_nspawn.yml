@@ -32,14 +32,14 @@ jobs:
           done
           sudo machinectl status debian-test
 
-      - name: Copy installer into container
-        run: |
-          sudo machinectl shell debian-test /bin/rm -f /root/installer
-          sudo machinectl copy-to debian-test ${{ github.workspace }}/installer /root/
+#      - name: Copy installer into container
+#        run: |
+#          sudo machinectl shell debian-test /bin/rm -f /root/installer
+#          sudo machinectl copy-to debian-test ${{ github.workspace }}/installer /root/
 
       - name: Run installer inside container
         run: |
-          sudo machinectl shell debian-test /bin/bash -c "cd /root && bash installer"
+          sudo machinectl shell debian-test /bin/bash -c "curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh"
 
       - name: Verify docker after install
         run: |
