@@ -13,32 +13,49 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y debootstrap systemd-container
+          sudo apt-get install -y debootstrap systemd-container dbus
 
       - name: Create Debian rootfs
         run: |
-          sudo debootstrap bookworm /var/lib/machines/debian-test
+          # debootstrap 默认安装非常精简，我们需要显式预装 dbus，否则容器里永远不会有 system bus
+          sudo debootstrap --include=dbus,curl,ca-certificates bookworm /var/lib/machines/debian-test
 
       - name: Boot Debian nspawn container
         run: |
-          sudo systemd-nspawn -D /var/lib/machines/debian-test --boot --machine debian-test &
-          # 等待容器启动
+          # 核心修改 1：添加 --network-veth 保证独立网络，添加特权参数以便后续在内部顺畅运行 Docker
+          sudo systemd-nspawn -D /var/lib/machines/debian-test \
+            --boot \
+            --machine debian-test \
+            --network-veth \
+            --cap-add=CAP_SYS_ADMIN \
+            --system-call-filter="allow" &
+
+          # 核心修改 2：采用更严丝合缝的双重检查（不仅要 running，还要等待 D-Bus 响应）
+          echo "Waiting for container and its System Bus to come online..."
+          SUCCESS=0
           for i in $(seq 1 30); do
-            if sudo machinectl status debian-test | grep -q "State: running"; then
-              echo "Container started"
-              break
+            # 1. 先检查基础状态
+            if sudo machinectl status debian-test 2>&1 | grep -q "State: running"; then
+              # 2. 再尝试运行一个极轻量的 shell 命令，看 D-Bus (system bus) 是否真正能够畅通建立连接
+              if sudo machinectl shell debian-test /bin/true >/dev/null 2>&1; then
+                echo "Container and System Bus are fully ready!"
+                SUCCESS=1
+                break
+              fi
             fi
+            echo "Still booting, waiting for D-Bus... ($i/30)"
             sleep 2
           done
-          sudo machinectl status debian-test
 
-#      - name: Copy installer into container
-#        run: |
-#          sudo machinectl shell debian-test /bin/rm -f /root/installer
-#          sudo machinectl copy-to debian-test ${{ github.workspace }}/installer /root/
+          if [ $SUCCESS -ne 1 ]; then
+            echo "Error: Container failed to host a system bus within 60 seconds."
+            sudo machinectl status debian-test || true
+            exit 1
+          fi
 
-      - name: Run installer inside container
+      - name: Run installer
         run: |
+          # 此时总线绝对百分之百就绪，无缝执行你的安装脚本
           sudo machinectl shell debian-test /bin/bash -c "curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh"
 
       - name: Verify docker after install
