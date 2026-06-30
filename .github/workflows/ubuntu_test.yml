@@ -21,8 +21,11 @@ jobs:
             echo "docker NOT found"
           fi
 
-      - name: Install via install script
-        run: curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh
+      # - name: Install via install script
+      #   run: curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh
+
+      - name: Install via installer in repo
+        run: bash installer
 
       - name: docker ps (after install)
         run: docker ps
@@ -51,8 +54,11 @@ jobs:
             echo "docker NOT found"
           fi
 
-      - name: Install via install script
-        run: curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh
+      # - name: Install via install script
+      #   run: curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh
+
+      - name: Install via installer in repo
+        run: bash installer
 
       - name: docker ps (after install)
         run: docker ps
