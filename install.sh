@@ -86,6 +86,20 @@ else
 fi
 echo "[INFO] OS: $OS_ID $OS_VERSION"
 
+# 构建 Docker 配置 JSON
+get_docker_config() {
+    local registry="$1"
+    cat <<EOF
+{
+  "registry-mirrors": [
+    "https://docker.m.daocloud.io",
+    "https://docker.mirrors.ustc.edu.cn",
+    "https://hub-mirror.c.163.com"
+  ],
+  "insecure-registries": ["$registry"]
+}
+EOF
+}
 # Function to set insecure registry
 set_insecure_registry() {
   # ci环境下跳过在job容器中的无效设置
@@ -122,24 +136,17 @@ set_insecure_registry() {
   if [[ ! -f "$config_file" ]] || [[ ! -s "$config_file" ]]; then
     echo "配置文件 $config_file 不存在，正在自动配置 insecure-registry: $registry"
     if [ "$use_docker_desktop" = true ]; then
-      printf '{\n  "insecure-registries": ["%s"]\n}\n' "$registry" > "$config_file"
-      echo "========================================"
-      echo "需要手动重启 Docker Desktop 使配置生效"
-      echo "========================================"
+        get_docker_config "$registry" > "$config_file"
+        echo "========================================"
+        echo "⚠️  需要手动重启 Docker Desktop 使配置生效"
+        echo "========================================"
     else
-      sudo tee "$config_file" > /dev/null <<EOF
-{
-  "registry-mirrors": [
-    "https://docker.io",
-    "https://docker.m.daocloud.io" ,
-    "https://docker.mirrors.ustc.edu.cn",
-    "https://hub-mirror.c.163.com"
-  ],
-  "insecure-registries": ["$registry"]
-}
-EOF
-      sudo systemctl restart docker 2>/dev/null
-      echo "Docker 已重启"
+        get_docker_config "$registry" | sudo tee "$config_file" > /dev/null
+        if sudo systemctl restart docker 2>/dev/null; then
+            echo "✅ Docker 服务已重启"
+        else
+            echo "⚠️  请手动重启 Docker 服务"
+        fi
     fi
     return 0
   fi
@@ -234,7 +241,7 @@ Ensure_Command() {
         fi
     fi
 }
-# 快速检测指定 URL 是否可达（3s 连接超时，5s 总超时）
+# 检测URL是否可达
 is_url_reachable() {
     local url="$1"
     local http_code
@@ -242,53 +249,85 @@ is_url_reachable() {
     [[ "$http_code" =~ ^(2|3|4)[0-9][0-9]$ ]]
 }
 
-# 官方 Docker 安装（适用于所有 Linux，30s 超时）
+# 官方 Docker 安装（300s 超时）
 install_docker_official() {
     echo "Installing Docker via official script (timeout: 30s)..."
-    timeout 30 bash -c "curl -fsSL https://get.docker.com | sudo sh" || true
+    timeout --foreground 300 bash -c "curl -fsSL https://get.docker.com | sudo sh" || true
 }
 
-# Aliyun 镜像安装 Docker —— Ubuntu/Debian（30s 超时）
+# Aliyun 镜像安装 Docker —— Ubuntu/Debian（500s 超时）
 install_docker_aliyun_apt() {
-    echo "Installing Docker via Aliyun mirror for Debian/Ubuntu (timeout: 30s)..."
-    timeout 600 bash -c "
-        set -e
-        sudo mkdir -p /etc/apt/keyrings
-        curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg \
-            | sudo gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
-        echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-            https://mirrors.aliyun.com/docker-ce/linux/ubuntu \
-            \$(. /etc/os-release && echo \$VERSION_CODENAME) stable\" \
-            | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-        sudo apt-get update -y
-        DEBIAN_FRONTEND=noninteractive sudo apt-get install -y \
-            docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    " || true
-}
+      echo "Installing Docker via Aliyun mirror for Debian/Ubuntu..."
+      timeout --foreground 500 bash -c "
+          set -e
+          . /etc/os-release
+          case \"\$ID\" in
+              ubuntu) DOCKER_OS='ubuntu' ;;
+              debian) DOCKER_OS='debian' ;;
+              *) echo \"Unsupported OS: \$ID\"; exit 1 ;;
+          esac
 
-# Aliyun 镜像安装 Docker —— CentOS/RHEL/Fedora（30s 超时）
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL \"https://mirrors.aliyun.com/docker-ce/linux/\${DOCKER_OS}/gpg\" \
+              | sudo gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+          echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+              https://mirrors.aliyun.com/docker-ce/linux/\${DOCKER_OS} \
+              \$VERSION_CODENAME stable\" \
+              | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          sudo apt-get update -y
+          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y \
+              docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      " || true
+  }
+
+# Aliyun 镜像安装 Docker —— CentOS/RHEL/Fedora（500s 超时）
 install_docker_aliyun_dnf() {
-    echo "Installing Docker via Aliyun mirror for RHEL/Fedora/CentOS (timeout: 30s)..."
-    timeout 30 bash -c "
-        set -e
-        sudo dnf install -y dnf-utils 2>/dev/null || sudo yum install -y yum-utils
-        sudo dnf config-manager --add-repo \
-            https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo 2>/dev/null \
-            || sudo yum-config-manager --add-repo \
-            https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
-        # 兼容 CentOS 7 / openEuler
-        sudo sed -i 's/\$releasever/7/g' /etc/yum.repos.d/docker-ce.repo
-        sudo dnf install -y docker-ce docker-ce-cli containerd.io --nogpgcheck 2>/dev/null \
-            || sudo yum install -y docker-ce docker-ce-cli containerd.io --nogpgcheck
-    " || true
-}
+      echo "Installing Docker via Aliyun mirror for RHEL/Fedora/CentOS..."
 
-# Aliyun 镜像安装 Docker —— Alpine（30s 超时）
+      local os_ver="" ver_major="" docker_repo="centos"
+      if [ -f /etc/os-release ]; then
+          . /etc/os-release
+          os_ver="$VERSION_ID"
+      fi
+      ver_major="${os_ver%%.*}"
+
+      # 根据发行版选择正确的 Docker repo
+      case "${ID,,}" in
+          centos)   docker_repo="centos" ;;
+          rhel)     docker_repo="rhel"   ;;
+          fedora)   docker_repo="fedora" ;;
+          *)        docker_repo="centos" ;;  # fallback
+      esac
+
+      timeout --foreground 500 bash -c "
+          set -e
+
+          if [ \"$ver_major\" -ge 8 ] 2>/dev/null; then
+              sudo dnf install -y dnf-plugins-core 2>/dev/null
+          else
+              sudo yum install -y yum-utils 2>/dev/null
+          fi
+
+          sudo dnf config-manager --add-repo \
+              https://mirrors.aliyun.com/docker-ce/linux/$docker_repo/docker-ce.repo 2>/dev/null \
+              || sudo yum-config-manager --add-repo \
+              https://mirrors.aliyun.com/docker-ce/linux/$docker_repo/docker-ce.repo 2>/dev/null
+
+          if [ \"$docker_repo\" != \"fedora\" ] && [ \"$ver_major\" -ge 8 ] 2>/dev/null; then
+              sudo sed -i \"s/\\\$releasever/$ver_major/g\" /etc/yum.repos.d/docker-ce.repo 2>/dev/null || true
+          fi
+
+          sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null \
+              || sudo yum install -y docker-ce docker-ce-cli containerd.io 2>/dev/null \
+              || true
+      " || true
+  }
+
+# Aliyun 镜像安装 Docker —— Alpine（500s 超时）
 install_docker_alpine() {
     echo "Installing Docker for Alpine (timeout: 30s)..."
-    timeout 30 bash -c "
+    timeout --foreground 500 bash -c "
         set -e
-        # 尝试使用阿里云 Alpine 镜像加速
         sudo sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories 2>/dev/null || true
         sudo apk add --no-cache docker docker-cli containerd
     " || true
@@ -319,7 +358,7 @@ function install_dependencies {
         Ensure_Command ip iproute2
         if ! command -v docker >/dev/null 2>&1; then
 
-            # 检测网络环境：测试 Aliyun 镜像站是否可达（3s 快速探测）
+            # 检测网络环境：测试 Aliyun 镜像站是否可达
             if is_url_reachable "https://mirrors.aliyun.com"; then
                 echo "Domestic network detected, using Aliyun mirror..."
                 case "$OS_ID" in
@@ -407,6 +446,36 @@ function pull_images {
   docker logout devstar.cn  > /dev/null 2>&1 || true
 }
 
+# Resolve the GID that /var/run/docker.sock actually has *inside* a container.
+#
+# The previous logic ran `stat -c %g /var/run/docker.sock` on the host where this
+# script runs, and assumed that GID equals the socket's GID inside the container.
+# That assumption is wrong when the socket is proxied across namespaces/distros,
+# e.g. Docker Desktop's WSL2 backend: the host-side path may report a placeholder
+# GID (such as 65534/nogroup) while the engine bind-mounts a socket whose
+# in-container GID is something else (such as 108). Adding the host-side GID then
+# leaves the studio's non-root user out of the socket's real group -> permission
+# denied when talking to the Docker API.
+#
+# Instead, probe the real in-container GID by mounting the socket into a throwaway
+# container and reading it there. Fall back to the host-side value, then to 0.
+function resolve_docker_socket_gid {
+  local probe_image="$1"
+  local gid=""
+
+  if [[ -n "$probe_image" ]]; then
+    gid=$(${DOCKER_CMD} run --rm --entrypoint stat \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            "$probe_image" -c %g /var/run/docker.sock 2>/dev/null | tr -dc '0-9') || gid=""
+  fi
+
+  if [[ -z "$gid" ]]; then
+    gid=$(stat -c %g /var/run/docker.sock 2>/dev/null | tr -dc '0-9') || gid=""
+  fi
+
+  printf '%s' "${gid:-0}"
+}
+
 # Function to start
 function start {
   echo "Starting DevStar Studio ... "
@@ -419,10 +488,8 @@ function start {
   if [ "$OS_ID" = "darwin" ]; then
     # macOS: get IP from network interface
     DOMAIN_NAME=$(ipconfig getifaddr en0 2>/dev/null || echo "localhost")
-    DOCKER_SOCKET_BINDING="-v /var/run/docker.sock:/var/run/docker.sock --group-add 0"
   else
     chown 1000:1000 "$DATA_DIR"
-    DOCKER_SOCKET_BINDING="-v /var/run/docker.sock:/var/run/docker.sock --group-add $(stat -c %g /var/run/docker.sock 2>/dev/null || echo 0)"
     DOMAIN_NAME=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
 
     if [[ -f "/.dockerenv" ]]; then
@@ -437,15 +504,18 @@ function start {
   # set insecure registry (must precede install() to avoid docker pull hanging)
   set_insecure_registry $DOMAIN_NAME $PORT
 
+  # 启动devstar-studio容器
   if [[ -z "$IMAGE_STR" ]]; then
       pull_images
   fi
-
-  # 启动devstar-studio容器
-    if [[ -z "$IMAGE_STR" ]]; then
+  if [[ -z "$IMAGE_STR" ]]; then
       IMAGE_STR=devstar.cn/devstar/devstar-studio:$IMAGE_TAG
-    fi
+  fi
   echo "image=$IMAGE_STR"
+
+  DOCKER_SOCKET_GID=$(resolve_docker_socket_gid "$IMAGE_STR" 2>/dev/null | grep -E '^[0-9]+$' || echo 0)
+  DOCKER_SOCKET_BINDING="-v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_SOCKET_GID}"
+
   mkdir -p "$(dirname "$CONTAINER_FILE")"
   if [[ -e "$CONTAINER_FILE" ]]; then
       stop
