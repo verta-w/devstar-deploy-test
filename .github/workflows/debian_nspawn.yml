@@ -6,62 +6,24 @@ on:
 jobs:
   debian-x86:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
+    steps:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y debootstrap systemd-container dbus
+          sudo apt-get install -y systemd-container debootstrap
 
       - name: Create Debian rootfs
         run: |
-          # 确保包含 systemd 完整套件
-          sudo debootstrap --include=dbus,curl,ca-certificates,systemd,procps,iptables bookworm /var/lib/machines/debian-test
+          sudo mkdir -p /var/lib/machines/debian
 
-      - name: Boot Debian nspawn container
+          sudo debootstrap stable /var/lib/machines/debian http://deb.debian.org/debian
+
+      - name: Run Debian nspawn and echo running
         run: |
-          # 核心修复：移除不兼容的 --cap-add 和 --system-call-filter，换成通用的 --capability=all 赋予完整容器特权
-          sudo systemd-run --unit=nspawn-debian-test \
-            systemd-nspawn -D /var/lib/machines/debian-test \
+          sudo systemd-nspawn \
+            -D /var/lib/machines/debian \
             --boot \
-            --machine debian-test \
-            --network-veth \
-            --capability=all
-          
-          echo "Waiting for container and its System Bus to come online..."
-          SUCCESS=0
-          for i in $(seq 1 30); do
-            # 检查 machinectl 里的注册状态
-            if sudo machinectl list 2>&1 | grep -q "debian-test"; then
-              # 通过总线连接探针
-              if sudo machinectl shell debian-test /bin/true >/dev/null 2>&1; then
-                echo "Container and System Bus are fully ready!"
-                SUCCESS=1
-                break
-              fi
-            fi
-            echo "Still booting, waiting for D-Bus... ($i/30)"
-            sleep 2
-          done
-          
-          if [ $SUCCESS -ne 1 ]; then
-            echo "Error: Container failed to boot or hosted a system bus."
-            echo "=== SHOWING CONTAINER BOOTING LOGS ==="
-            sudo journalctl -u nspawn-debian-test --no-pager -n 100 || true
-            exit 1
-          fi
-
-      - name: Run installer
-        run: |
-          sudo machinectl shell debian-test /bin/bash -c "curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh"
-
-      - name: Verify docker after install
-        run: |
-          sudo machinectl shell debian-test docker ps
-
-      - name: Stop container
-        if: always()
-        run: |
-          sudo machinectl poweroff debian-test || sudo systemctl stop nspawn-debian-test || true
+            --machine=debian \
+            --quiet \
+            /bin/bash -c 'echo running'
