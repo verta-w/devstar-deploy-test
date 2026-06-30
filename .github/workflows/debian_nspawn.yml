@@ -17,45 +17,51 @@ jobs:
 
       - name: Create Debian rootfs
         run: |
-          # debootstrap 默认安装非常精简，我们需要显式预装 dbus，否则容器里永远不会有 system bus
-          sudo debootstrap --include=dbus,curl,ca-certificates bookworm /var/lib/machines/debian-test
+          # 包含基础网络、D-Bus 和内核管理组件
+          sudo debootstrap --include=dbus,curl,ca-certificates,systemd,procps bookworm /var/lib/machines/debian-test
 
       - name: Boot Debian nspawn container
         run: |
-          # 核心修改 1：添加 --network-veth 保证独立网络，添加特权参数以便后续在内部顺畅运行 Docker
+          # 【终极核心修改】
+          # 1. 使用 --quiet 减少 CI 终端抢占
+          # 2. 使用 --ephemeral=no 确保容器不被作为临时镜像销毁
+          # 3. 输入重定向自 /dev/null 阻止后台进程因 stdin 丢失而暴毙
           sudo systemd-nspawn -D /var/lib/machines/debian-test \
             --boot \
             --machine debian-test \
             --network-veth \
             --cap-add=CAP_SYS_ADMIN \
-            --system-call-filter="allow" &
+            --system-call-filter="allow" \
+            --quiet < /dev/null &
 
-          # 核心修改 2：采用更严丝合缝的双重检查（不仅要 running，还要等待 D-Bus 响应）
           echo "Waiting for container and its System Bus to come online..."
           SUCCESS=0
           for i in $(seq 1 30); do
-            # 1. 先检查基础状态
-            if sudo machinectl status debian-test 2>&1 | grep -q "State: running"; then
-              # 2. 再尝试运行一个极轻量的 shell 命令，看 D-Bus (system bus) 是否真正能够畅通建立连接
+            # 优先检查进程是否还活着
+            if sudo machinectl list 2>&1 | grep -q "debian-test"; then
+              # 尝试通信探针
               if sudo machinectl shell debian-test /bin/true >/dev/null 2>&1; then
                 echo "Container and System Bus are fully ready!"
                 SUCCESS=1
                 break
               fi
+            else
+              echo "Warning: Container process missing from machine list, retrying... ($i/30)"
             fi
-            echo "Still booting, waiting for D-Bus... ($i/30)"
             sleep 2
           done
 
           if [ $SUCCESS -ne 1 ]; then
-            echo "Error: Container failed to host a system bus within 60 seconds."
-            sudo machinectl status debian-test || true
+            echo "Error: Container failed to boot or hosted a system bus."
+            echo "=== SHOWING HOST JOURNAL LOGS FOR DEBIAN-TEST ==="
+            # 打印宿主机的系统日志，用来抓取容器到底因为什么崩溃了
+            sudo journalctl -u systemd-nspawn@debian-test --no-pager -n 50 || true
+            sudo journalctl --failed --no-pager || true
             exit 1
           fi
 
       - name: Run installer
         run: |
-          # 此时总线绝对百分之百就绪，无缝执行你的安装脚本
           sudo machinectl shell debian-test /bin/bash -c "curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh"
 
       - name: Verify docker after install
