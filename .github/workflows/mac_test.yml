@@ -23,7 +23,7 @@ jobs:
             echo "docker NOT found"
           fi
       - name: Install via install script
-        run: bash install.sh
+        run: bash installer
 
       - name: docker ps (after install)
         run: docker ps
