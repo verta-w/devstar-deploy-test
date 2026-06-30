@@ -1,4 +1,4 @@
-name: Debian nspawn Test
+name: Debian nspawn Simple Test
 
 on:
   workflow_dispatch:
@@ -6,24 +6,29 @@ on:
 jobs:
   debian-x86:
     runs-on: ubuntu-latest
-
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y systemd-container debootstrap
+          sudo apt-get install -y debootstrap systemd-container
 
       - name: Create Debian rootfs
         run: |
-          sudo mkdir -p /var/lib/machines/debian
+          # 灌入最基础、最精简的 Debian 系统（仅需几秒钟）
+          sudo debootstrap --variant=minbase bookworm /var/lib/machines/debian-test
 
-          sudo debootstrap stable /var/lib/machines/debian http://deb.debian.org/debian
-
-      - name: Run Debian nspawn and echo running
+      - name: Run commands inside Debian container
         run: |
-          sudo systemd-nspawn \
-            -D /var/lib/machines/debian \
-            --boot \
-            --machine=debian \
-            --quiet \
-            /bin/bash -c 'echo running'
+          echo "=== 正在进入 Debian 容器内部执行命令 ==="
+          
+          # 直接调用 systemd-nspawn 进入目录执行 bash 命令
+          sudo systemd-nspawn -D /var/lib/machines/debian-test /bin/bash -c "
+            echo '当前系统版本:'
+            cat /etc/os-release | grep PRETTY_NAME
+          
+            echo -e '\n当前系统架构:'
+            uname -m
+          "
