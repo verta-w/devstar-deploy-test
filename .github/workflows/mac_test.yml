@@ -7,57 +7,23 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Show system info
         run: |
           echo "System: $(sw_vers -productName) $(sw_vers -productVersion)"
           echo "Architecture: $(uname -m)"
-
-      - name: Setup Docker via Colima (QEMU backend)
-        timeout-minutes: 15
+      - name: Check docker command
         run: |
-          if command -v docker &>/dev/null && docker info &>/dev/null; then
-            echo "Docker already available, skipping setup"
-            exit 0
+          if command -v docker &>/dev/null; then
+            echo "docker found: $(which docker)"
+            docker --version
+          else
+            echo "docker NOT found"
           fi
-
-          echo "=== Installing docker CLI, colima and qemu ==="
-          brew install docker qemu colima
-
-          echo "=== Host virtualization check ==="
-          echo "HVF support: $(sysctl -n kern.hv_support 2>/dev/null || echo 'unknown')"
-
-          echo "=== Starting colima with QEMU backend (TCG, minimal resources) ==="
-          # 在 CI 的 macOS VM 里，嵌套虚拟化不可用，QEMU 必须用 TCG（纯软件模拟）
-          # 减少资源避免被宿主机 OOM Kill
-          colima start \
-            --vm-type qemu \
-            --cpu 1 \
-            --memory 2 \
-            --disk 20 \
-            --verbose \
-            || {
-              rc=$?
-              echo "=== Colima failed (exit=$rc), dumping logs ==="
-              echo "--- serial log ---"
-              for f in /Users/runner/.colima/_lima/colima/serial*.log; do
-                echo "=== $f ==="
-                cat "$f" 2>/dev/null || echo "(not found)"
-              done
-              echo "--- ha.stderr.log ---"
-              cat /Users/runner/.colima/_lima/colima/ha.stderr.log 2>/dev/null || echo "(not found)"
-              echo "--- ha.stdout.log ---"
-              cat /Users/runner/.colima/_lima/colima/ha.stdout.log 2>/dev/null || echo "(not found)"
-              echo "--- qemu args ---"
-              grep -r "qemu" /Users/runner/.colima/_lima/colima/*.yaml 2>/dev/null || true
-              exit $rc
-            }
-
-          echo "=== Docker info ==="
-          docker info
-          docker --version
-
       - name: Install via install script
-        run: curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh
+        run: bash install.sh
 
       - name: docker ps (after install)
         run: docker ps
