@@ -1,4 +1,4 @@
-name: Debian nspawn Simple Test
+name: Debian nspawn Devstar Test
 
 on:
   workflow_dispatch:
@@ -6,29 +6,50 @@ on:
 jobs:
   debian-x86:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
+    steps:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y debootstrap systemd-container
+          sudo apt-get install -y systemd-container debootstrap curl
 
       - name: Create Debian rootfs
         run: |
-          # 灌入最基础、最精简的 Debian 系统（仅需几秒钟）
-          sudo debootstrap --variant=minbase bookworm /var/lib/machines/debian-test
+          sudo mkdir -p /var/lib/machines/debian
 
-      - name: Run commands inside Debian container
+          sudo debootstrap stable /var/lib/machines/debian http://deb.debian.org/debian
+
+      - name: Start Debian with systemd
         run: |
-          echo "=== 正在进入 Debian 容器内部执行命令 ==="
-          
-          # 直接调用 systemd-nspawn 进入目录执行 bash 命令
-          sudo systemd-nspawn -D /var/lib/machines/debian-test /bin/bash -c "
-            echo '当前系统版本:'
-            cat /etc/os-release | grep PRETTY_NAME
-          
-            echo -e '\n当前系统架构:'
-            uname -m
+          sudo systemd-nspawn \
+            -D /var/lib/machines/debian \
+            --boot \
+            --machine=debian \
+            --quiet &
+
+          sleep 15
+
+      # ================= STEP 1 =================
+      - name: Step 1 - docker ps
+        run: |
+          sudo systemd-nspawn -M debian --quiet /bin/bash -c "docker ps || true"
+
+      # ================= STEP 2 =================
+      - name: Step 2 - install devstar
+        run: |
+          sudo systemd-nspawn -M debian --quiet /bin/bash -c "
+            curl -fsSL https://devstar.cn/install -o install.sh &&
+            bash install.sh
           "
+
+      # ================= STEP 3 =================
+      - name: Step 3 - devstar start
+        run: |
+          sudo systemd-nspawn -M debian --quiet /bin/bash -c "
+            devstar start
+          "
+
+      # ================= STEP 4 =================
+      - name: Step 4 - docker ps again
+        run: |
+          sudo systemd-nspawn -M debian --quiet /bin/bash -c "docker ps || true"
