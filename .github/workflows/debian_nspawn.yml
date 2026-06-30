@@ -22,15 +22,14 @@ jobs:
 
       - name: Boot Debian nspawn container
         run: |
-          # 【核心修改 1】：使用 systemd-run 把容器提权为宿主机的系统服务，彻底防止后台闪退
+          # 核心修复：移除不兼容的 --cap-add 和 --system-call-filter，换成通用的 --capability=all 赋予完整容器特权
           sudo systemd-run --unit=nspawn-debian-test \
             systemd-nspawn -D /var/lib/machines/debian-test \
             --boot \
             --machine debian-test \
             --network-veth \
-            --cap-add=CAP_SYS_ADMIN \
-            --system-call-filter="allow"
-
+            --capability=all
+          
           echo "Waiting for container and its System Bus to come online..."
           SUCCESS=0
           for i in $(seq 1 30); do
@@ -46,11 +45,10 @@ jobs:
             echo "Still booting, waiting for D-Bus... ($i/30)"
             sleep 2
           done
-
+          
           if [ $SUCCESS -ne 1 ]; then
             echo "Error: Container failed to boot or hosted a system bus."
             echo "=== SHOWING CONTAINER BOOTING LOGS ==="
-            # 【核心修改 2】：此时可以通过我们的单元名称拿到完整的开机崩溃日志
             sudo journalctl -u nspawn-debian-test --no-pager -n 100 || true
             exit 1
           fi
