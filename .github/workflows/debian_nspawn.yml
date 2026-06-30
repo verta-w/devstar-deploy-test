@@ -1,0 +1,50 @@
+name: Debian nspawn Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debian-x86:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debootstrap systemd-container
+
+      - name: Create Debian rootfs
+        run: |
+          sudo debootstrap bookworm /var/lib/machines/debian-test
+
+      - name: Boot Debian nspawn container
+        run: |
+          sudo systemd-nspawn -D /var/lib/machines/debian-test --boot --machine debian-test &
+          # 等待容器启动
+          for i in $(seq 1 30); do
+            if sudo machinectl status debian-test | grep -q "State: running"; then
+              echo "Container started"
+              break
+            fi
+            sleep 2
+          done
+          sudo machinectl status debian-test
+
+      - name: Copy installer into container
+        run: |
+          sudo machinectl copy-to debian-test ${{ github.workspace }}/installer /root/
+
+      - name: Run installer inside container
+        run: |
+          sudo machinectl shell debian-test /bin/bash -c "cd /root && bash installer"
+
+      - name: Verify docker after install
+        run: |
+          sudo machinectl shell debian-test docker ps
+
+      - name: Stop container
+        if: always()
+        run: |
+          sudo machinectl poweroff debian-test || true
