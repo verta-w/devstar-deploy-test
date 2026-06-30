@@ -17,46 +17,41 @@ jobs:
 
       - name: Create Debian rootfs
         run: |
-          # 包含基础网络、D-Bus 和内核管理组件
-          sudo debootstrap --include=dbus,curl,ca-certificates,systemd,procps bookworm /var/lib/machines/debian-test
+          # 确保包含 systemd 完整套件
+          sudo debootstrap --include=dbus,curl,ca-certificates,systemd,procps,iptables bookworm /var/lib/machines/debian-test
 
       - name: Boot Debian nspawn container
         run: |
-          # 【终极核心修改】
-          # 1. 使用 --quiet 减少 CI 终端抢占
-          # 2. 使用 --ephemeral=no 确保容器不被作为临时镜像销毁
-          # 3. 输入重定向自 /dev/null 阻止后台进程因 stdin 丢失而暴毙
-          sudo systemd-nspawn -D /var/lib/machines/debian-test \
+          # 【核心修改 1】：使用 systemd-run 把容器提权为宿主机的系统服务，彻底防止后台闪退
+          sudo systemd-run --unit=nspawn-debian-test \
+            systemd-nspawn -D /var/lib/machines/debian-test \
             --boot \
             --machine debian-test \
             --network-veth \
             --cap-add=CAP_SYS_ADMIN \
-            --system-call-filter="allow" \
-            --quiet < /dev/null &
+            --system-call-filter="allow"
 
           echo "Waiting for container and its System Bus to come online..."
           SUCCESS=0
           for i in $(seq 1 30); do
-            # 优先检查进程是否还活着
+            # 检查 machinectl 里的注册状态
             if sudo machinectl list 2>&1 | grep -q "debian-test"; then
-              # 尝试通信探针
+              # 通过总线连接探针
               if sudo machinectl shell debian-test /bin/true >/dev/null 2>&1; then
                 echo "Container and System Bus are fully ready!"
                 SUCCESS=1
                 break
               fi
-            else
-              echo "Warning: Container process missing from machine list, retrying... ($i/30)"
             fi
+            echo "Still booting, waiting for D-Bus... ($i/30)"
             sleep 2
           done
 
           if [ $SUCCESS -ne 1 ]; then
             echo "Error: Container failed to boot or hosted a system bus."
-            echo "=== SHOWING HOST JOURNAL LOGS FOR DEBIAN-TEST ==="
-            # 打印宿主机的系统日志，用来抓取容器到底因为什么崩溃了
-            sudo journalctl -u systemd-nspawn@debian-test --no-pager -n 50 || true
-            sudo journalctl --failed --no-pager || true
+            echo "=== SHOWING CONTAINER BOOTING LOGS ==="
+            # 【核心修改 2】：此时可以通过我们的单元名称拿到完整的开机崩溃日志
+            sudo journalctl -u nspawn-debian-test --no-pager -n 100 || true
             exit 1
           fi
 
@@ -71,4 +66,4 @@ jobs:
       - name: Stop container
         if: always()
         run: |
-          sudo machinectl poweroff debian-test || true
+          sudo machinectl poweroff debian-test || sudo systemctl stop nspawn-debian-test || true
