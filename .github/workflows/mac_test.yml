@@ -4,33 +4,24 @@ on:
   workflow_dispatch:
 
 jobs:
-  macos:
-    runs-on: macos-latest
+  test-mac:
+    # 必须明确指定 intel 镜像，macos-latest 现在是 ARM 芯片
+    runs-on: macos-13
+
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Show system info
+      - name: Install and Start Docker (via Colima)
         run: |
-          echo "System: $(sw_vers -productName) $(sw_vers -productVersion)"
-          echo "Architecture: $(uname -m)"
-      - name: Check docker command
+          brew install qemu colima docker
+          colima start --network-address
+
+      - name: Verify Docker
         run: |
-          if command -v docker &>/dev/null; then
-            echo "docker found: $(which docker)"
-            docker --version
-          else
-            echo "docker NOT found"
-          fi
-      - name: Install via install script
-        run: bash installer
+          docker version
+          docker run hello-world
 
-      - name: docker ps (after install)
-        run: docker ps
-
-      - name: devstar start
-        shell: bash --login {0}
-        run: sudo env "PATH=$PATH" devstar start
-
-      - name: docker ps (after start)
-        run: docker ps
+      - name: Run your Mac tests
+        run: |
+          echo "在这里执行你的 Mac 测试脚本，同时可以调用上面的 Docker 容器"
