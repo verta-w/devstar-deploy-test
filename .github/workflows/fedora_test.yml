@@ -18,10 +18,10 @@ jobs:
       - name: VM Deploy - Generate SSH key
         run: ssh-keygen -t ed25519 -f ~/.ssh/id_qemu -N "" -q
 
-      - name: VM Deploy - Download Fedora 40 cloud image
+      - name: VM Deploy - Download Fedora 41 cloud image
         run: |
           wget -q --show-progress -O /tmp/fedora.qcow2 \
-            https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2
+            https://download.fedoraproject.org/pub/fedora/linux/releases/41/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-41-1.4.qcow2
 
       - name: VM Deploy - Create cloud-init seed
         run: |
@@ -148,10 +148,10 @@ jobs:
       - name: VM Deploy - Generate SSH key
         run: ssh-keygen -t ed25519 -f ~/.ssh/id_qemu -N "" -q
 
-      - name: VM Deploy - Download Fedora 40 ARM64 cloud image
+      - name: VM Deploy - Download Fedora 41 ARM64 cloud image
         run: |
           wget -q --show-progress -O /tmp/fedora-arm64.qcow2 \
-            https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/40/Cloud/aarch64/images/Fedora-Cloud-Base-Generic.aarch64-40-1.14.qcow2
+            https://download.fedoraproject.org/pub/fedora/linux/releases/41/Cloud/aarch64/images/Fedora-Cloud-Base-Generic.aarch64-41-1.4.qcow2
 
       - name: VM Deploy - Create cloud-init seed
         run: |
@@ -177,7 +177,8 @@ jobs:
             -m 2048 \
             -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
             -drive if=virtio,file=/tmp/fedora-arm64.qcow2,format=qcow2 \
-            -drive if=virtio,file=/tmp/seed.img,format=raw \
+            -drive if=none,id=seed,file=/tmp/seed.img,format=raw \
+            -device virtio-blk-device,drive=seed,serial=ds2023 \
             -net nic,model=virtio \
             -net user,hostfwd=tcp::2222-:22 \
             -display none \
