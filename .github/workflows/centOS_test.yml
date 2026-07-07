@@ -14,7 +14,7 @@ jobs:
       - name: VM Deploy - Install QEMU and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 ovmf qemu-utils cloud-image-utils openssh-client wget
+          sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils openssh-client wget
 
       - name: VM Deploy - Generate SSH key
         run: ssh-keygen -t ed25519 -f ~/.ssh/id_qemu -N "" -q
@@ -39,15 +39,12 @@ jobs:
           echo -e "instance-id: centos-x86_64\nlocal-hostname: centos-x86_64" > /tmp/meta-data
           cloud-localds /tmp/seed.img /tmp/user-data /tmp/meta-data
 
-      - name: VM Deploy - Boot VM
+      - name: VM Deploy - Boot VM (SeaBIOS)
         run: |
-          cp /usr/share/OVMF/OVMF_VARS_4M.fd /tmp/OVMF_VARS.fd
           qemu-system-x86_64 \
             -m 2048 -smp 2 \
             -machine q35,accel=tcg \
             -cpu max \
-            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-            -drive if=pflash,format=raw,file=/tmp/OVMF_VARS.fd \
             -netdev user,id=net0,hostfwd=tcp::2222-:22 \
             -device virtio-net-pci,netdev=net0 \
             -drive file=/tmp/centos.qcow2,format=qcow2,if=virtio \
