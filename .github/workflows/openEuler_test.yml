@@ -13,33 +13,15 @@ jobs:
       - name: VM Deploy - Install QEMU and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils openssh-client wget
-
-      - name: VM Deploy - Generate SSH key
-        run: ssh-keygen -t ed25519 -f ~/.ssh/id_qemu -N "" -q
+          sudo apt-get install -y qemu-system-x86 qemu-utils openssh-client sshpass wget
 
       - name: VM Deploy - Download openEuler cloud image
         run: |
           wget -q --show-progress -O /tmp/openeuler.qcow2.xz \
-            https://mirrors.tuna.tsinghua.edu.cn/openeuler/openEuler-22.03-LTS-SP4/virtual_machine_img/x86_64/openEuler-22.03-LTS-SP4-x86_64.qcow2.xz
+            https://repo.openeuler.org/openEuler-22.03-LTS-SP4/virtual_machine_img/x86_64/openEuler-22.03-LTS-SP4-x86_64.qcow2.xz
 
       - name: VM Deploy - Decompress cloud image
         run: xz -d /tmp/openeuler.qcow2.xz
-
-      - name: VM Deploy - Create cloud-init seed
-        run: |
-          cat > /tmp/user-data << 'EOF'
-          #cloud-config
-          users:
-            - name: tester
-              sudo: ALL=(ALL) NOPASSWD:ALL
-              lock_passwd: true
-              ssh_authorized_keys:
-                - __KEY__
-          EOF
-          sed -i "s|__KEY__|$(cat ~/.ssh/id_qemu.pub)|" /tmp/user-data
-          echo -e "instance-id: openeuler-x86_64\nlocal-hostname: openeuler-x86_64" > /tmp/meta-data
-          cloud-localds /tmp/seed.img /tmp/user-data /tmp/meta-data
 
       - name: VM Deploy - Boot VM (SeaBIOS)
         run: |
@@ -50,7 +32,6 @@ jobs:
             -netdev user,id=net0,hostfwd=tcp::2222-:22 \
             -device virtio-net-pci,netdev=net0 \
             -drive file=/tmp/openeuler.qcow2,format=qcow2,if=virtio \
-            -drive file=/tmp/seed.img,format=raw,if=virtio \
             -display none \
             -serial file:/tmp/qemu-serial.log \
             -monitor none \
@@ -68,9 +49,10 @@ jobs:
       - name: VM Deploy - Wait for SSH
         run: |
           for i in $(seq 1 90); do
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
-              -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu \
-              -p 2222 tester@localhost 'exit' 2>/dev/null && \
+            sshpass -p 'openEuler12#$' \
+              ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+                -o UserKnownHostsFile=/dev/null \
+                -p 2222 root@localhost 'exit' 2>/dev/null && \
               echo "SSH ready ($((i*5))s)" && exit 0
             sleep 5
           done
@@ -85,57 +67,65 @@ jobs:
 
       - name: VM Deploy - Show system info
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'echo "System: $(. /etc/os-release && echo $NAME $VERSION)" && echo "Architecture: $(uname -m)"'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'echo "System: $(. /etc/os-release && echo $NAME $VERSION)" && echo "Architecture: $(uname -m)"'
 
       - name: Check docker command
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'if command -v docker >/dev/null 2>&1; then
-               echo "docker found: $(command -v docker)"
-               docker --version
-             else
-               echo "docker NOT found"
-             fi'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'if command -v docker >/dev/null 2>&1; then
+                 echo "docker found: $(command -v docker)"
+                 docker --version
+               else
+                 echo "docker NOT found"
+               fi'
 
       - name: Install prerequisites
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'sudo dnf install -y curl ca-certificates'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'dnf install -y curl ca-certificates'
 
       - name: Install via install script
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh'
 
       - name: docker ps (after install)
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'docker ps'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'docker ps'
 
       - name: devstar start
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            '. ~/.profile 2>/dev/null; . ~/.bashrc 2>/dev/null; sudo env "PATH=$PATH" devstar start'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'devstar start'
 
       - name: docker ps (after start)
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'docker ps'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'docker ps'
 
       - name: Shutdown VM
         if: always()
         run: |
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
-            -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu \
-            -p 2222 tester@localhost 'sudo poweroff' 2>/dev/null || true
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+              -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost 'poweroff' 2>/dev/null || true
 
   openeuler-arm64-qemu:
     runs-on: ubuntu-24.04-arm
@@ -143,33 +133,15 @@ jobs:
       - name: VM Deploy - Install QEMU and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils openssh-client wget
-
-      - name: VM Deploy - Generate SSH key
-        run: ssh-keygen -t ed25519 -f ~/.ssh/id_qemu -N "" -q
+          sudo apt-get install -y qemu-system-arm qemu-utils qemu-efi-aarch64 openssh-client sshpass wget
 
       - name: VM Deploy - Download openEuler ARM64 cloud image
         run: |
           wget -q --show-progress -O /tmp/openeuler-arm64.qcow2.xz \
-            https://mirrors.tuna.tsinghua.edu.cn/openeuler/openEuler-22.03-LTS-SP4/virtual_machine_img/aarch64/openEuler-22.03-LTS-SP4-aarch64.qcow2.xz
+            https://repo.openeuler.org/openEuler-22.03-LTS-SP4/virtual_machine_img/aarch64/openEuler-22.03-LTS-SP4-aarch64.qcow2.xz
 
       - name: VM Deploy - Decompress cloud image
         run: xz -d /tmp/openeuler-arm64.qcow2.xz
-
-      - name: VM Deploy - Create cloud-init seed
-        run: |
-          cat > /tmp/user-data << 'EOF'
-          #cloud-config
-          users:
-            - name: tester
-              sudo: ALL=(ALL) NOPASSWD:ALL
-              lock_passwd: true
-              ssh_authorized_keys:
-                - __KEY__
-          EOF
-          sed -i "s|__KEY__|$(cat ~/.ssh/id_qemu.pub)|" /tmp/user-data
-          echo -e "instance-id: openeuler-arm64\nlocal-hostname: openeuler-arm64" > /tmp/meta-data
-          cloud-localds /tmp/seed.img /tmp/user-data /tmp/meta-data
 
       - name: VM Deploy - Boot VM
         run: |
@@ -180,7 +152,6 @@ jobs:
             -m 2048 \
             -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
             -drive if=virtio,file=/tmp/openeuler-arm64.qcow2,format=qcow2 \
-            -drive if=virtio,file=/tmp/seed.img,format=raw \
             -net nic,model=virtio \
             -net user,hostfwd=tcp::2222-:22 \
             -display none \
@@ -200,9 +171,10 @@ jobs:
       - name: VM Deploy - Wait for SSH
         run: |
           for i in $(seq 1 90); do
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
-              -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu \
-              -p 2222 tester@localhost 'exit' 2>/dev/null && \
+            sshpass -p 'openEuler12#$' \
+              ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+                -o UserKnownHostsFile=/dev/null \
+                -p 2222 root@localhost 'exit' 2>/dev/null && \
               echo "SSH ready ($((i*5))s)" && exit 0
             sleep 5
           done
@@ -217,54 +189,62 @@ jobs:
 
       - name: VM Deploy - Show system info
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'echo "System: $(. /etc/os-release && echo $NAME $VERSION)" && echo "Architecture: $(uname -m)"'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'echo "System: $(. /etc/os-release && echo $NAME $VERSION)" && echo "Architecture: $(uname -m)"'
 
       - name: Check docker command
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'if command -v docker >/dev/null 2>&1; then
-               echo "docker found: $(command -v docker)"
-               docker --version
-             else
-               echo "docker NOT found"
-             fi'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'if command -v docker >/dev/null 2>&1; then
+                 echo "docker found: $(command -v docker)"
+                 docker --version
+               else
+                 echo "docker NOT found"
+               fi'
 
       - name: Install prerequisites
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'sudo dnf install -y curl ca-certificates'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'dnf install -y curl ca-certificates'
 
       - name: Install via install script
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh'
 
       - name: docker ps (after install)
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'docker ps'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'docker ps'
 
       - name: devstar start
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            '. ~/.profile 2>/dev/null; . ~/.bashrc 2>/dev/null; sudo env "PATH=$PATH" devstar start'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'devstar start'
 
       - name: docker ps (after start)
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'docker ps'
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost \
+              'docker ps'
 
       - name: Shutdown VM
         if: always()
         run: |
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
-            -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu \
-            -p 2222 tester@localhost 'sudo poweroff' 2>/dev/null || true
+          sshpass -p 'openEuler12#$' \
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+              -o UserKnownHostsFile=/dev/null \
+              -p 2222 root@localhost 'poweroff' 2>/dev/null || true
