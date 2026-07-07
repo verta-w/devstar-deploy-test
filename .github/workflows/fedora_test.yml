@@ -1,0 +1,267 @@
+name: Fedora Test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/fedora_test.yml'
+
+jobs:
+  fedora-x86_64-qemu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: VM Deploy - Install QEMU and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf qemu-utils cloud-image-utils openssh-client wget
+
+      - name: VM Deploy - Generate SSH key
+        run: ssh-keygen -t ed25519 -f ~/.ssh/id_qemu -N "" -q
+
+      - name: VM Deploy - Download Fedora 40 cloud image
+        run: |
+          wget -q --show-progress -O /tmp/fedora.qcow2 \
+            https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2
+
+      - name: VM Deploy - Create cloud-init seed
+        run: |
+          cat > /tmp/user-data << 'EOF'
+          #cloud-config
+          users:
+            - name: tester
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              lock_passwd: true
+              ssh_authorized_keys:
+                - __KEY__
+          EOF
+          sed -i "s|__KEY__|$(cat ~/.ssh/id_qemu.pub)|" /tmp/user-data
+          echo -e "instance-id: fedora-x86_64\nlocal-hostname: fedora-x86_64" > /tmp/meta-data
+          cloud-localds /tmp/seed.img /tmp/user-data /tmp/meta-data
+
+      - name: VM Deploy - Boot VM
+        run: |
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd /tmp/OVMF_VARS.fd
+          qemu-system-x86_64 \
+            -m 2048 -smp 2 \
+            -machine q35,accel=tcg \
+            -cpu max \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+            -drive if=pflash,format=raw,file=/tmp/OVMF_VARS.fd \
+            -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+            -device virtio-net-pci,netdev=net0 \
+            -drive file=/tmp/fedora.qcow2,format=qcow2,if=virtio \
+            -drive file=/tmp/seed.img,format=raw,if=virtio \
+            -display none \
+            -serial file:/tmp/qemu-serial.log \
+            -monitor none \
+            &
+          QEMU_PID=$!
+          echo "QEMU PID: $QEMU_PID"
+          sleep 3
+          if ! kill -0 $QEMU_PID 2>/dev/null; then
+            echo "QEMU crashed at startup!"
+            echo "=== Serial log ==="
+            cat /tmp/qemu-serial.log 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: VM Deploy - Wait for SSH
+        run: |
+          for i in $(seq 1 90); do
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+              -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu \
+              -p 2222 tester@localhost 'exit' 2>/dev/null && \
+              echo "SSH ready ($((i*5))s)" && exit 0
+            sleep 5
+          done
+          echo "=== SSH timeout - debugging ==="
+          echo "--- QEMU process ---"
+          pgrep -fa qemu || echo "QEMU not running!"
+          echo "--- Serial console (last 80 lines) ---"
+          tail -80 /tmp/qemu-serial.log 2>/dev/null || echo "No serial log"
+          echo "--- Port 2222 ---"
+          ss -tlnp | grep 2222 || echo "Port 2222 not listening"
+          exit 1
+
+      - name: VM Deploy - Show system info
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'echo "System: $(. /etc/os-release && echo $NAME $VERSION)" && echo "Architecture: $(uname -m)"'
+
+      - name: Check docker command
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'if command -v docker >/dev/null 2>&1; then
+               echo "docker found: $(command -v docker)"
+               docker --version
+             else
+               echo "docker NOT found"
+             fi'
+
+      - name: Install prerequisites
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'sudo dnf install -y curl ca-certificates'
+
+      - name: Install via install script
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh'
+
+      - name: docker ps (after install)
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'docker ps'
+
+      - name: devstar start
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            '. ~/.profile 2>/dev/null; . ~/.bashrc 2>/dev/null; sudo env "PATH=$PATH" devstar start'
+
+      - name: docker ps (after start)
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'docker ps'
+
+      - name: Shutdown VM
+        if: always()
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+            -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu \
+            -p 2222 tester@localhost 'sudo poweroff' 2>/dev/null || true
+
+  fedora-arm64-qemu:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: VM Deploy - Install QEMU and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils openssh-client wget
+
+      - name: VM Deploy - Generate SSH key
+        run: ssh-keygen -t ed25519 -f ~/.ssh/id_qemu -N "" -q
+
+      - name: VM Deploy - Download Fedora 40 ARM64 cloud image
+        run: |
+          wget -q --show-progress -O /tmp/fedora-arm64.qcow2 \
+            https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/aarch64/images/Fedora-Cloud-Base-Generic.aarch64-40-1.14.qcow2
+
+      - name: VM Deploy - Create cloud-init seed
+        run: |
+          cat > /tmp/user-data << 'EOF'
+          #cloud-config
+          users:
+            - name: tester
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              lock_passwd: true
+              ssh_authorized_keys:
+                - __KEY__
+          EOF
+          sed -i "s|__KEY__|$(cat ~/.ssh/id_qemu.pub)|" /tmp/user-data
+          echo -e "instance-id: fedora-arm64\nlocal-hostname: fedora-arm64" > /tmp/meta-data
+          cloud-localds /tmp/seed.img /tmp/user-data /tmp/meta-data
+
+      - name: VM Deploy - Boot VM
+        run: |
+          qemu-system-aarch64 \
+            -machine virt \
+            -cpu max \
+            -smp 2 \
+            -m 2048 \
+            -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
+            -drive if=virtio,file=/tmp/fedora-arm64.qcow2,format=qcow2 \
+            -drive if=virtio,file=/tmp/seed.img,format=raw \
+            -net nic,model=virtio \
+            -net user,hostfwd=tcp::2222-:22 \
+            -display none \
+            -serial file:/tmp/qemu-serial.log \
+            -monitor none \
+            &
+          QEMU_PID=$!
+          echo "QEMU PID: $QEMU_PID"
+          sleep 3
+          if ! kill -0 $QEMU_PID 2>/dev/null; then
+            echo "QEMU crashed at startup!"
+            echo "=== Serial log ==="
+            cat /tmp/qemu-serial.log 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: VM Deploy - Wait for SSH
+        run: |
+          for i in $(seq 1 90); do
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+              -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu \
+              -p 2222 tester@localhost 'exit' 2>/dev/null && \
+              echo "SSH ready ($((i*5))s)" && exit 0
+            sleep 5
+          done
+          echo "=== SSH timeout - debugging ==="
+          echo "--- QEMU process ---"
+          pgrep -fa qemu || echo "QEMU not running!"
+          echo "--- Serial console (last 80 lines) ---"
+          tail -80 /tmp/qemu-serial.log 2>/dev/null || echo "No serial log"
+          echo "--- Port 2222 ---"
+          ss -tlnp | grep 2222 || echo "Port 2222 not listening"
+          exit 1
+
+      - name: VM Deploy - Show system info
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'echo "System: $(. /etc/os-release && echo $NAME $VERSION)" && echo "Architecture: $(uname -m)"'
+
+      - name: Check docker command
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'if command -v docker >/dev/null 2>&1; then
+               echo "docker found: $(command -v docker)"
+               docker --version
+             else
+               echo "docker NOT found"
+             fi'
+
+      - name: Install prerequisites
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'sudo dnf install -y curl ca-certificates'
+
+      - name: Install via install script
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh'
+
+      - name: docker ps (after install)
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'docker ps'
+
+      - name: devstar start
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            '. ~/.profile 2>/dev/null; . ~/.bashrc 2>/dev/null; sudo env "PATH=$PATH" devstar start'
+
+      - name: docker ps (after start)
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+            'docker ps'
+
+      - name: Shutdown VM
+        if: always()
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+            -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_qemu \
+            -p 2222 tester@localhost 'sudo poweroff' 2>/dev/null || true
