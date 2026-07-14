@@ -384,8 +384,17 @@ function install_dependencies {
             fi
         fi
         if ! docker info >/dev/null 2>&1; then
-            sudo systemctl enable docker
-            sudo systemctl start docker
+            if command -v systemctl >/dev/null 2>&1; then
+                sudo systemctl enable docker 2>/dev/null || true
+                sudo systemctl start docker 2>/dev/null || true
+            elif command -v rc-service >/dev/null 2>&1; then
+                sudo rc-update add docker boot 2>/dev/null || true
+                sudo rc-service docker start 2>/dev/null || true
+            elif command -v service >/dev/null 2>&1; then
+                sudo service docker start 2>/dev/null || true
+            else
+                echo -e "\033[33m[NOTE] Cannot detect init system. Please start Docker manually.\033[0m"
+            fi
             sudo usermod -aG docker $USER
             echo -e "\n\033[33m[NOTE] User added to 'docker' group.\033[0m"
             echo -e "\033[33m[NOTE] Please REBOOT later to apply permission changes.\033[0m\n"
@@ -410,8 +419,17 @@ function install_dependencies {
             fi
         fi
         if ! docker info >/dev/null 2>&1; then
-            sudo systemctl enable docker
-            sudo systemctl start docker
+            if command -v systemctl >/dev/null 2>&1; then
+                sudo systemctl enable docker 2>/dev/null || true
+                sudo systemctl start docker 2>/dev/null || true
+            elif command -v rc-service >/dev/null 2>&1; then
+                sudo rc-update add docker boot 2>/dev/null || true
+                sudo rc-service docker start 2>/dev/null || true
+            elif command -v service >/dev/null 2>&1; then
+                sudo service docker start 2>/dev/null || true
+            else
+                echo -e "\033[33m[NOTE] Cannot detect init system. Please start Docker manually.\033[0m"
+            fi
             sudo usermod -aG docker $USER
             echo -e "\n\033[33m[NOTE] User added to 'docker' group.\033[0m"
             echo -e "\033[33m[NOTE] Please REBOOT later to apply permission changes.\033[0m\n"
@@ -490,7 +508,7 @@ function start {
     DOMAIN_NAME=$(ipconfig getifaddr en0 2>/dev/null || echo "localhost")
   else
     chown 1000:1000 "$DATA_DIR"
-    DOMAIN_NAME=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
+    DOMAIN_NAME=$(ip route get 1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')
 
     if [[ -f "/.dockerenv" ]]; then
       if [[ -S "/var/run/docker.sock" ]] && command -v docker >/dev/null 2>&1; then

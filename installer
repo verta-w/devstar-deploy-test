@@ -15,7 +15,6 @@ no_modify_path=false
 specific_version="${VERSION:-latest}"
 filename="devstar"
 url="https://devstar.cn/assets/install.sh"
-local_install_sh="./install.sh"  # 本地测试
 
 detect_os_arch() {
     raw_os=$(uname -s)
@@ -64,24 +63,16 @@ download_and_install() {
     local tmp_dir="${TMPDIR:-/tmp}/devstar_install_$$"
     mkdir -p "$tmp_dir"
 
-    # if [[ "$os" == "windows" ]] || ! [ -t 2 ] || ! download_with_progress "$url" "$tmp_dir/$filename"; then
-    #     # Fallback to standard curl on Windows, non-TTY environments, or if custom progress fails
-    #     curl -# -L -o "$tmp_dir/$filename" "$url"
+    if [[ "$os" == "windows" ]] || ! [ -t 2 ] || ! download_with_progress "$url" "$tmp_dir/$filename"; then
+        # Fallback to standard curl on Windows, non-TTY environments, or if custom progress fails
+        curl -# -L -o "$tmp_dir/$filename" "$url"
+    fi
+
+    # if [ "$os" = "linux" ]; then
+    #     tar -xzf "$tmp_dir/$filename" -C "$tmp_dir"
+    # else
+    #     unzip -q "$tmp_dir/$filename" -d "$tmp_dir"
     # fi
-
-    # # if [ "$os" = "linux" ]; then
-    # #     tar -xzf "$tmp_dir/$filename" -C "$tmp_dir"
-    # # else
-    # #     unzip -q "$tmp_dir/$filename" -d "$tmp_dir"
-    # # fi
-
-    if [[ -f "$local_install_sh" ]]; then
-          echo -e "${MUTED}Using local install.sh: ${NC}$local_install_sh"
-          cp "$local_install_sh" "$tmp_dir/$filename"
-      elif [[ "$os" == "windows" ]] || ! [ -t 2 ] || ! download_with_progress "$url" "$tmp_dir/$filename"; then
-          # Fallback to standard curl on Windows, non-TTY environments, or if custom progress fails
-          curl -# -L -o "$tmp_dir/$filename" "$url"
-      fi
 
     mv "$tmp_dir/devstar" "$INSTALL_DIR"
     chmod 755 "${INSTALL_DIR}/devstar"
@@ -176,7 +167,7 @@ if [[ "$no_modify_path" != "true" ]]; then
     fi
 fi
 
-# 对 bash：额外确保 .profile 也有 PATH，覆盖 login shell（newgrp、SSH 等）
+# 对bash确保 .profile有PATH，覆盖 login shell（newgrp、SSH）
 if [[ "$current_shell" == "bash" ]]; then
     for login_file in "$HOME/.profile" "$HOME/.bash_profile"; do
         if [[ -f "$login_file" ]]; then
@@ -219,9 +210,9 @@ echo -e ""
 echo -e ""
 
 if [[ "$os" == "linux" ]]; then
-    exec newgrp docker
+    exec newgrp docker < /dev/tty
 elif [[ "$os" == "darwin" ]]; then
-    exec $SHELL -l
+    exec $SHELL -l < /dev/tty
 fi
 
 
