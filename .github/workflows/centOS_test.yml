@@ -108,7 +108,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh'
+            'curl -fsSL https://devstar.cn/install | bash'
 
       - name: docker ps (after install)
         run: |
@@ -237,7 +237,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'curl -fsSL https://devstar.cn/install -o install.sh && bash install.sh'
+            'curl -fsSL https://devstar.cn/install | bash'
 
       - name: docker ps (after install)
         run: |
