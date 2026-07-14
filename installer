@@ -195,7 +195,7 @@ echo " "
 echo "╔══════════════════════════════════════════════════════════════════════════════════╗"
 echo "║                   DevStar Studio  © Mengning Software 2026                       ║"
 echo "╚══════════════════════════════════════════════════════════════════════════════════╝"
-echo " "
+echo "---------- local test ---------- "
 echo -e ""
 echo -e "${GREEN}DevStar Studio : The Last Mile of AI for R&D${NC}"
 echo -e ""
@@ -209,10 +209,13 @@ echo -e "${MUTED}For more information visit ${NC}https://mengning.com.cn"
 echo -e ""
 echo -e ""
 
-if [[ "$os" == "linux" ]]; then
-    exec newgrp docker < /dev/tty
-elif [[ "$os" == "darwin" ]]; then
-    exec $SHELL -l < /dev/tty
-fi
+if [ ! -t 0 ] || [ -n "${CI-}" ] || [ -n "${GITHUB_ACTIONS-}" ]; then
+      echo "[INFO] Non-interactive environment detected, skipping group refresh."
+      echo "[INFO] You may need to log out and back in for docker group to take effect."
+  elif [[ "$os" == "linux" ]]; then
+      exec newgrp docker < /dev/tty
+  elif [[ "$os" == "darwin" ]]; then
+      exec $SHELL -l < /dev/tty
+  fi
 
 
