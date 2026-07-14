@@ -11,6 +11,8 @@ jobs:
   centos-x86_64-qemu:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: VM Deploy - Install QEMU and dependencies
         run: |
           sudo apt-get update
@@ -104,11 +106,17 @@ jobs:
             -i ~/.ssh/id_qemu -p 2222 tester@localhost \
             'sudo dnf install -y curl ca-certificates'
 
-      - name: Install via install script
+#      - name: Install via install script
+#        run: |
+#          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+#            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+#            'curl -fsSL https://devstar.cn/install | bash'
+
+      - name: Install via installer in repo
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          cat installer | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'curl -fsSL https://devstar.cn/install | bash'
+            'bash'
 
       - name: docker ps (after install)
         run: |
@@ -138,6 +146,8 @@ jobs:
   centos-arm64-qemu:
     runs-on: ubuntu-24.04-arm
     steps:
+      - uses: actions/checkout@v4
+
       - name: VM Deploy - Install QEMU and dependencies
         run: |
           sudo apt-get update
@@ -233,11 +243,17 @@ jobs:
             -i ~/.ssh/id_qemu -p 2222 tester@localhost \
             'sudo dnf install -y curl ca-certificates'
 
-      - name: Install via install script
+#      - name: Install via install script
+#        run: |
+#          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+#            -i ~/.ssh/id_qemu -p 2222 tester@localhost \
+#            'curl -fsSL https://devstar.cn/install | bash'
+
+      - name: Install via installer in repo
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          cat installer | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -i ~/.ssh/id_qemu -p 2222 tester@localhost \
-            'curl -fsSL https://devstar.cn/install | bash'
+            'bash'
 
       - name: docker ps (after install)
         run: |
