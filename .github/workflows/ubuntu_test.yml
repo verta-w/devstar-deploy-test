@@ -2,6 +2,9 @@ name: Ubuntu Test
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/ubuntu_test.yml'
 
 jobs:
   ubuntu-x86_64:
@@ -23,11 +26,11 @@ jobs:
             echo "docker NOT found"
           fi
 
-      - name: Install via install script
-        run: curl -fsSL https://devstar.cn/install | bash
+#      - name: Install via install script
+#        run: curl -fsSL https://devstar.cn/install | bash
 
-#      - name: Install via installer in repo
-#        run: bash installer
+      - name: Install via installer in repo
+        run: cat installer | bash
 
       - name: docker ps (after install)
         run: docker ps
@@ -58,11 +61,11 @@ jobs:
             echo "docker NOT found"
           fi
 
-      - name: Install via install script
-        run: curl -fsSL https://devstar.cn/install | bash
+#      - name: Install via install script
+#        run: curl -fsSL https://devstar.cn/install | bash
 
-#      - name: Install via installer in repo
-#        run: bash installer
+      - name: Install via installer in repo
+        run: cat installer | bash
 
       - name: docker ps (after install)
         run: docker ps
